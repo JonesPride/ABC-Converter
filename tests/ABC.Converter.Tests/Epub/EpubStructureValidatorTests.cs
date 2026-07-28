@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Text;
 using ABC.Converter.Core.Models;
@@ -126,6 +127,53 @@ public sealed class EpubStructureValidatorTests
         await AssertInvalidAsync(
             () => validator.ValidateAsync(epub, CancellationToken.None),
             "mimetype");
+    }
+
+    [Fact]
+    public async Task RejectsWhenCentralDirectoryOrderDisagreesWithPhysicalLocalOrder()
+    {
+        using var files = new TemporaryDirectory();
+        string epub = files.PathFor("central-order-mismatch.epub");
+        WriteEpub(
+            epub,
+            "EPUB/package.opf",
+            [
+                Entry("EPUB/nav.xhtml", ValidXhtml()),
+                Entry("EPUB/images/cover.png", [0x89, 0x50, 0x4E, 0x47]),
+                Entry("EPUB/pages/page.xhtml", ValidXhtml()),
+                Entry("EPUB/package.opf", PackageOpf())
+            ],
+            writeBeforeMimetype: true);
+        RewriteCentralDirectoryWithMimetypeFirst(epub);
+        var validator = new EpubStructureValidator();
+
+        await AssertInvalidAsync(
+            () => validator.ValidateAsync(epub, CancellationToken.None),
+            "mimetype");
+    }
+
+    [Fact]
+    public async Task RejectsATruncatedArchiveWithAnArchiveRule()
+    {
+        using var files = new TemporaryDirectory();
+        string epub = files.PathFor("truncated.epub");
+        await File.WriteAllBytesAsync(epub, [0x50]);
+        var validator = new EpubStructureValidator();
+
+        await AssertInvalidAsync(
+            () => validator.ValidateAsync(epub, CancellationToken.None),
+            "archive");
+    }
+
+    [Fact]
+    public async Task PropagatesCancellationBeforeReadingTheArchive()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var validator = new EpubStructureValidator();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => validator.ValidateAsync("unused.epub", cancellation.Token));
     }
 
     [Fact]
@@ -438,7 +486,84 @@ public sealed class EpubStructureValidatorTests
         stream.Write(contents);
     }
 
+    private static void RewriteCentralDirectoryWithMimetypeFirst(string path)
+    {
+        byte[] archive = File.ReadAllBytes(path);
+        int endOfCentralDirectory = FindEndOfCentralDirectory(archive);
+        int entryCount = BinaryPrimitives.ReadUInt16LittleEndian(
+            archive.AsSpan(endOfCentralDirectory + 10, 2));
+        int centralDirectorySize = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(
+            archive.AsSpan(endOfCentralDirectory + 12, 4)));
+        int centralDirectoryOffset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(
+            archive.AsSpan(endOfCentralDirectory + 16, 4)));
+        int centralDirectoryEnd = checked(centralDirectoryOffset + centralDirectorySize);
+        var records = new List<CentralDirectoryRecord>(entryCount);
+        int offset = centralDirectoryOffset;
+
+        for (int index = 0; index < entryCount; index++)
+        {
+            records.Add(ReadCentralDirectoryRecord(archive, ref offset));
+        }
+
+        Assert.Equal(centralDirectoryEnd, offset);
+        CentralDirectoryRecord mimetype = Assert.Single(
+            records,
+            record => record.Name == "mimetype");
+        byte[] reordered = records
+            .Where(record => record != mimetype)
+            .Prepend(mimetype)
+            .SelectMany(record => record.Bytes)
+            .ToArray();
+        Assert.Equal(centralDirectorySize, reordered.Length);
+        reordered.CopyTo(archive, centralDirectoryOffset);
+        File.WriteAllBytes(path, archive);
+    }
+
+    private static int FindEndOfCentralDirectory(byte[] archive)
+    {
+        const uint EndOfCentralDirectorySignature = 0x06054B50;
+        int firstPossibleOffset = Math.Max(0, archive.Length - 22 - ushort.MaxValue);
+        for (int offset = archive.Length - 22; offset >= firstPossibleOffset; offset--)
+        {
+            if (BinaryPrimitives.ReadUInt32LittleEndian(archive.AsSpan(offset, 4)) ==
+                EndOfCentralDirectorySignature)
+            {
+                return offset;
+            }
+        }
+
+        throw new InvalidDataException("Test fixture has no end of central directory.");
+    }
+
+    private static CentralDirectoryRecord ReadCentralDirectoryRecord(
+        byte[] archive,
+        ref int offset)
+    {
+        const uint CentralDirectorySignature = 0x02014B50;
+        const int FixedHeaderLength = 46;
+        Assert.Equal(
+            CentralDirectorySignature,
+            BinaryPrimitives.ReadUInt32LittleEndian(archive.AsSpan(offset, 4)));
+        int fileNameLength = BinaryPrimitives.ReadUInt16LittleEndian(
+            archive.AsSpan(offset + 28, 2));
+        int extraLength = BinaryPrimitives.ReadUInt16LittleEndian(
+            archive.AsSpan(offset + 30, 2));
+        int commentLength = BinaryPrimitives.ReadUInt16LittleEndian(
+            archive.AsSpan(offset + 32, 2));
+        int recordLength = checked(
+            FixedHeaderLength + fileNameLength + extraLength + commentLength);
+        string name = Encoding.UTF8.GetString(
+            archive,
+            offset + FixedHeaderLength,
+            fileNameLength);
+        byte[] bytes = archive.AsSpan(offset, recordLength).ToArray();
+        offset += recordLength;
+        return new CentralDirectoryRecord(name, bytes);
+    }
+
     private sealed record ArchiveEntry(string Path, byte[] Contents);
+
+    private sealed record CentralDirectoryRecord(string Name, byte[] Bytes);
 
     private sealed class TemporaryDirectory : IDisposable
     {
