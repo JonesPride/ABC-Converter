@@ -21,6 +21,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         new(StringComparer.OrdinalIgnoreCase);
     private readonly object _activeJobLock = new();
     private readonly AsyncCommand _addFilesCommand;
+    private readonly AsyncCommand _addFolderCommand;
     private readonly AsyncCommand _startCommand;
     private readonly AsyncCommand _cancelSelectedCommand;
     private readonly AsyncCommand _browseOutputCommand;
@@ -45,6 +46,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             "ABC Converter");
 
         _addFilesCommand = new AsyncCommand(AddFilesFromPickerAsync);
+        _addFolderCommand = new AsyncCommand(AddFolderFromPickerAsync);
         _startCommand = new AsyncCommand(
             () => StartAsync(CancellationToken.None),
             CanStart);
@@ -107,6 +109,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             : Jobs.Average(job => job.Progress);
 
     public ICommand AddFilesCommand => _addFilesCommand;
+
+    public ICommand AddFolderCommand => _addFolderCommand;
 
     public ICommand StartCommand => _startCommand;
 
@@ -180,13 +184,24 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
                 try
                 {
+                    bool shouldProcess = false;
                     await RunOnDispatcherAsync(() =>
                     {
+                        if (job.Status != "Queued")
+                        {
+                            return;
+                        }
+
                         job.Status = "Scanning";
                         job.Progress = 5;
                         job.ErrorMessage = null;
                         job.OutputPath = null;
+                        shouldProcess = true;
                     });
+                    if (!shouldProcess)
+                    {
+                        continue;
+                    }
 
                     string title = Path.GetFileNameWithoutExtension(
                         job.SourcePath);
@@ -332,6 +347,16 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         if (paths.Count > 0)
         {
             await AddPathsAsync(paths);
+        }
+    }
+
+    private async Task AddFolderFromPickerAsync()
+    {
+        string? path = _folderPicker.PickFolder(
+            "Add folder containing CBZ comics");
+        if (path is not null)
+        {
+            await AddPathsAsync([path]);
         }
     }
 
