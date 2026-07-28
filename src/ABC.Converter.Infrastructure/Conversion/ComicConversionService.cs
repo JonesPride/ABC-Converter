@@ -50,6 +50,8 @@ public sealed class ComicConversionService(
                 throw new IOException("The source CBZ changed during conversion.");
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (File.Exists(outputPath))
             {
                 throw new IOException($"Output already exists: {outputPath}");
