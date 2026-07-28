@@ -278,3 +278,8 @@ public sealed class CbzArchiveReaderTests
         string expectedMediaType)
     {
         Assert.Equal(expectedArchivePath, archivePath);
+        Assert.Equal(expectedMediaType, mediaType);
+        Assert.Equal(1, width);
+        Assert.Equal(1, height);
+    }
+}
