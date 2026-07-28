@@ -1,4 +1,5 @@
 using System.IO;
+using ABC.Converter.App.Commands;
 using ABC.Converter.App.ViewModels;
 using ABC.Converter.App.Tests.TestSupport;
 using Xunit;
@@ -154,6 +155,52 @@ public sealed class MainWindowViewModelTests
         Assert.Equal("Failed", job.Status);
         Assert.Equal("The archive is corrupt.", job.ErrorMessage);
         Assert.Null(job.OutputPath);
+    }
+
+    [Fact]
+    public async Task CancellingLaterQueuedJobWhileFirstRunsPreventsItsConversion()
+    {
+        using var files = new TemporaryDirectory();
+        string firstComic = files.Write("first.cbz", [0x01]);
+        string secondComic = files.Write("second.cbz", [0x02]);
+        var firstReadStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstRead = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        int readCount = 0;
+        var reader = new RecordingArchiveReader(
+            beforeReturn: async (_, cancellationToken) =>
+            {
+                if (Interlocked.Increment(ref readCount) == 1)
+                {
+                    firstReadStarted.TrySetResult();
+                    await releaseFirstRead.Task.WaitAsync(cancellationToken);
+                }
+            });
+        var viewModel = new MainWindowViewModel(
+            ConversionHarness.CreateService(reader))
+        {
+            OutputRoot = files.PathFor("output"),
+        };
+        await viewModel.AddPathsAsync([firstComic, secondComic]);
+        ConversionJobViewModel firstJob = viewModel.Jobs[0];
+        ConversionJobViewModel secondJob = viewModel.Jobs[1];
+        viewModel.SelectedJob = secondJob;
+
+        Task conversion = viewModel.StartAsync(CancellationToken.None);
+        await firstReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var cancelCommand = Assert.IsType<AsyncCommand>(
+            viewModel.CancelSelectedCommand);
+
+        await cancelCommand.ExecuteAsync();
+        string statusAfterCancellation = secondJob.Status;
+        releaseFirstRead.TrySetResult();
+        await conversion.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("Cancelled", statusAfterCancellation);
+        Assert.Equal([Path.GetFullPath(firstComic)], reader.ReadPaths);
+        Assert.Equal("Completed", firstJob.Status);
+        Assert.Equal("Cancelled", secondJob.Status);
     }
 
     private sealed record ConversionSnapshot(
