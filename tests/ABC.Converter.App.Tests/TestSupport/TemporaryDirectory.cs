@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace ABC.Converter.App.Tests.TestSupport;
 
 internal sealed class TemporaryDirectory : IDisposable
