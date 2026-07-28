@@ -1,9 +1,9 @@
 # Foundation comic fixtures
 
 The foundation acceptance suite creates its CBZ inputs at test time. It uses
-the deterministic 1×1 PNG, JPEG, and WebP images from `FixtureArchive`; no
-copyrighted comic pages or binary fixture archives are stored in the
-repository.
+deterministic, dimension-specific PNG, JPEG, and WebP images from
+`FixtureArchive`; no copyrighted comic pages or binary fixture archives are
+stored in the repository.
 
 `FoundationAcceptanceTests` covers:
 
@@ -21,6 +21,9 @@ Every successful fixture runs through `CbzArchiveReader`,
 `SeriesOutputPathPolicy`, and `ComicConversionService`. The resulting EPUB is
 then opened to verify its spine page count, progression direction, image
 manifest and cover declaration, packaged image bytes, and each page viewport.
+The success matrix uses distinct non-square source dimensions and compares
+each known width and height with both the archive scan and its matching XHTML
+viewport.
 Each case runs in an isolated temporary directory, verifies that the source
 archive is unchanged, and removes the directory afterward.
 
