@@ -286,10 +286,9 @@ public sealed class FixedLayoutEpubBuilderTests
         XElement manifest = Assert.Single(
             package.Descendants(OpfNamespace + "manifest"));
         XElement cover = Assert.Single(
-            manifest
-                .Elements(OpfNamespace + "item")
-                .Where(item =>
-                    (string?)item.Attribute("properties") == "cover-image"));
+            manifest.Elements(OpfNamespace + "item"),
+            item =>
+                (string?)item.Attribute("properties") == "cover-image");
         Assert.Equal("image-0002", (string?)cover.Attribute("id"));
         Assert.Equal(
             "images/page-0002.jpg",
@@ -459,9 +458,8 @@ public sealed class FixedLayoutEpubBuilderTests
         string? properties = null)
     {
         XElement item = Assert.Single(
-            manifest
-                .Elements(OpfNamespace + "item")
-                .Where(element => (string?)element.Attribute("id") == id));
+            manifest.Elements(OpfNamespace + "item"),
+            element => (string?)element.Attribute("id") == id);
         Assert.Equal(href, (string?)item.Attribute("href"));
         Assert.Equal(mediaType, (string?)item.Attribute("media-type"));
         Assert.Equal(properties, (string?)item.Attribute("properties"));
@@ -475,10 +473,9 @@ public sealed class FixedLayoutEpubBuilderTests
     {
         Assert.Equal(HtmlNamespace + "html", page.Root?.Name);
         XElement viewportElement = Assert.Single(
-            page
-                .Descendants(HtmlNamespace + "meta")
-                .Where(element =>
-                    (string?)element.Attribute("name") == "viewport"));
+            page.Descendants(HtmlNamespace + "meta"),
+            element =>
+                (string?)element.Attribute("name") == "viewport");
         Assert.Equal(
             viewport,
             (string?)viewportElement.Attribute("content"));
@@ -496,17 +493,15 @@ public sealed class FixedLayoutEpubBuilderTests
 
     private static XElement FindMetadata(XElement metadata, string property) =>
         Assert.Single(
-            metadata
-                .Elements(OpfNamespace + "meta")
-                .Where(element =>
-                    (string?)element.Attribute("property") == property));
+            metadata.Elements(OpfNamespace + "meta"),
+            element =>
+                (string?)element.Attribute("property") == property);
 
     private static XElement FindOption(XElement platform, string name) =>
         Assert.Single(
-            platform
-                .Elements("option")
-                .Where(element =>
-                    (string?)element.Attribute("name") == name));
+            platform.Elements("option"),
+            element =>
+                (string?)element.Attribute("name") == name);
 
     private static ZipArchiveEntry GetEntry(ZipArchive zip, string path) =>
         zip.GetEntry(path) ??
