@@ -103,8 +103,14 @@ public sealed class SeriesOutputPathPolicy : IOutputPathPolicy
             (stem.Length == 4 &&
                 (stem.StartsWith("COM", StringComparison.Ordinal) ||
                     stem.StartsWith("LPT", StringComparison.Ordinal)) &&
-                stem[3] is >= '1' and <= '9');
+                IsReservedPortSuffix(stem[3]));
     }
+
+    private static bool IsReservedPortSuffix(char suffix) =>
+        (suffix >= '1' && suffix <= '9') ||
+        suffix == '¹' ||
+        suffix == '²' ||
+        suffix == '³';
 
     private static string DisambiguateReservedWindowsName(string value)
     {
