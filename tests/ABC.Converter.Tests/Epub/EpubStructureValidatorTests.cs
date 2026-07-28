@@ -308,6 +308,35 @@ public sealed class EpubStructureValidatorTests
     }
 
     [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task RejectsXhtmlManifestItemWithoutAUsableHref(string? href)
+    {
+        using var files = new TemporaryDirectory();
+        string epub = files.PathFor("missing-xhtml-href.epub");
+        string replacement = href is null ? string.Empty : $" href=\"{href}\"";
+        string package = PackageOpf().Replace(
+            " href=\"pages/page.xhtml\"",
+            replacement,
+            StringComparison.Ordinal);
+        WriteEpub(
+            epub,
+            "EPUB/package.opf",
+            [
+                Entry("EPUB/nav.xhtml", ValidXhtml()),
+                Entry("EPUB/images/cover.png", [0x89, 0x50, 0x4E, 0x47]),
+                Entry("EPUB/pages/page.xhtml", ValidXhtml()),
+                Entry("EPUB/package.opf", package)
+            ]);
+        var validator = new EpubStructureValidator();
+
+        await AssertInvalidAsync(
+            () => validator.ValidateAsync(epub, CancellationToken.None),
+            "manifest");
+    }
+
+    [Theory]
     [InlineData(false, false, true, false, "nav")]
     [InlineData(true, true, true, false, "nav")]
     [InlineData(true, false, false, false, "cover-image")]
