@@ -139,6 +139,37 @@ public sealed class SeriesOutputPathPolicyTests
             IsReservedWindowsName);
     }
 
+    [Theory]
+    [InlineData("COM¹")]
+    [InlineData("com¹.txt")]
+    [InlineData("COM²")]
+    [InlineData("cOm².log")]
+    [InlineData("COM³")]
+    [InlineData("CoM³.dat")]
+    [InlineData("LPT¹")]
+    [InlineData("lpt¹.txt")]
+    [InlineData("LPT²")]
+    [InlineData("lPt².log")]
+    [InlineData("LPT³")]
+    [InlineData("LpT³.dat")]
+    public void SanitizesSuperscriptReservedWindowsAliasesInFoldersAndFiles(
+        string reservedName)
+    {
+        using var directory = new TemporaryDirectory();
+        var policy = new SeriesOutputPathPolicy();
+
+        string path = policy.GetOutputPath(
+            directory.Path,
+            new ComicMetadata("", reservedName));
+
+        string[] components = RelativeComponents(directory.Path, path);
+        Assert.Equal(2, components.Length);
+        Assert.All(components, AssertWindowsSafeComponent);
+        Assert.DoesNotContain(
+            components,
+            IsReservedWindowsName);
+    }
+
     [Fact]
     public void FallsBackWhenSanitizationRemovesEveryCharacter()
     {
@@ -210,8 +241,14 @@ public sealed class SeriesOutputPathPolicyTests
             (normalized.Length == 4 &&
                 (normalized.StartsWith("COM", StringComparison.Ordinal) ||
                     normalized.StartsWith("LPT", StringComparison.Ordinal)) &&
-                normalized[3] is >= '1' and <= '9');
+                IsReservedPortSuffix(normalized[3]));
     }
+
+    private static bool IsReservedPortSuffix(char suffix) =>
+        (suffix >= '1' && suffix <= '9') ||
+        suffix == '¹' ||
+        suffix == '²' ||
+        suffix == '³';
 
     private sealed class TemporaryDirectory : IDisposable
     {
