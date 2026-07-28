@@ -6,33 +6,44 @@ namespace ABC.Converter.App.Tests.TestSupport;
 
 internal sealed class RecordingArchiveReader(
     Action<string>? onRead = null,
-    Exception? readException = null) : IComicArchiveReader
+    Exception? readException = null,
+    Func<string, CancellationToken, Task>? beforeReturn = null)
+    : IComicArchiveReader
 {
+    private readonly List<string> _readPaths = [];
+
     public int ReadCount { get; private set; }
 
-    public Task<ComicSource> ReadAsync(
+    public IReadOnlyList<string> ReadPaths => _readPaths;
+
+    public async Task<ComicSource> ReadAsync(
         string sourcePath,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ReadCount++;
+        _readPaths.Add(sourcePath);
         onRead?.Invoke(sourcePath);
         if (readException is not null)
         {
             throw readException;
         }
 
-        return Task.FromResult(
-            new ComicSource(
-                sourcePath,
-                [
-                    new ComicPage(
-                        "page1.jpg",
-                        "image/jpeg",
-                        1,
-                        1),
-                ],
-                0));
+        if (beforeReturn is not null)
+        {
+            await beforeReturn(sourcePath, cancellationToken);
+        }
+
+        return new ComicSource(
+            sourcePath,
+            [
+                new ComicPage(
+                    "page1.jpg",
+                    "image/jpeg",
+                    1,
+                    1),
+            ],
+            0);
     }
 
     public Task ExtractPageAsync(
