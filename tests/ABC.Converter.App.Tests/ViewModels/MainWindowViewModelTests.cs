@@ -1,3 +1,4 @@
+using System.IO;
 using ABC.Converter.App.ViewModels;
 using ABC.Converter.App.Tests.TestSupport;
 using Xunit;
