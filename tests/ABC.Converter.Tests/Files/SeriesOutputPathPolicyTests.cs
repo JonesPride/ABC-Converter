@@ -186,15 +186,15 @@ public sealed class SeriesOutputPathPolicyTests
 
     private static void AssertWindowsSafeComponent(string component)
     {
-        Assert.DoesNotContain(component, '<');
-        Assert.DoesNotContain(component, '>');
-        Assert.DoesNotContain(component, ':');
-        Assert.DoesNotContain(component, '"');
-        Assert.DoesNotContain(component, '/');
-        Assert.DoesNotContain(component, '\\');
-        Assert.DoesNotContain(component, '|');
-        Assert.DoesNotContain(component, '?');
-        Assert.DoesNotContain(component, '*');
+        Assert.False(component.Contains('<'));
+        Assert.False(component.Contains('>'));
+        Assert.False(component.Contains(':'));
+        Assert.False(component.Contains('"'));
+        Assert.False(component.Contains('/'));
+        Assert.False(component.Contains('\\'));
+        Assert.False(component.Contains('|'));
+        Assert.False(component.Contains('?'));
+        Assert.False(component.Contains('*'));
         Assert.DoesNotContain(component, character => character is >= '\0' and <= '\u001F');
         Assert.False(component.EndsWith(' '));
         Assert.False(component.EndsWith('.'));
