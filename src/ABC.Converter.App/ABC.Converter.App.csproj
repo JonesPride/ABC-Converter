@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ABC.Converter.Core\ABC.Converter.Core.csproj" />
+    <ProjectReference Include="..\ABC.Converter.Infrastructure\ABC.Converter.Infrastructure.csproj" />
+    <ProjectReference Include="..\ABC.Converter.Epub\ABC.Converter.Epub.csproj" />
+  </ItemGroup>
+</Project>
