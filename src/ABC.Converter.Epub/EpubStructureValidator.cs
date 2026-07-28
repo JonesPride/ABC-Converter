@@ -272,13 +272,23 @@ public sealed class EpubStructureValidator : IEpubValidator
     {
         foreach (XElement item in manifestItems)
         {
-            string? href = (string?)item.Attribute("href");
-            if (string.IsNullOrWhiteSpace(href) ||
-                archive.GetEntry(ResolveManifestPath(packagePath, href)) is null)
+            string href = GetRequiredManifestHref(item);
+            if (archive.GetEntry(ResolveManifestPath(packagePath, href)) is null)
             {
                 throw Invalid("manifest references a missing resource.");
             }
         }
+    }
+
+    private static string GetRequiredManifestHref(XElement item)
+    {
+        string? href = (string?)item.Attribute("href");
+        if (string.IsNullOrWhiteSpace(href))
+        {
+            throw Invalid("manifest item href is missing.");
+        }
+
+        return href;
     }
 
     private static void ValidateSingleProperty(
@@ -323,7 +333,7 @@ public sealed class EpubStructureValidator : IEpubValidator
         foreach (XElement item in manifestItems.Where(IsXhtml))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            string href = (string?)item.Attribute("href")!;
+            string href = GetRequiredManifestHref(item);
             ZipArchiveEntry entry = GetRequiredEntry(
                 archive,
                 ResolveManifestPath(packagePath, href),
