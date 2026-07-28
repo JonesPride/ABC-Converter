@@ -42,6 +42,9 @@ public sealed class NaturalPathComparer : IComparer<string>
             bi++;
         }
 
-        return a.Length.CompareTo(b.Length);
+        int pathLengthResult = a.Length.CompareTo(b.Length);
+        return pathLengthResult != 0
+            ? pathLengthResult
+            : string.CompareOrdinal(left, right);
     }
 }
