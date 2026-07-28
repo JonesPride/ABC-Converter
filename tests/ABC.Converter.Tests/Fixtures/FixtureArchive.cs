@@ -35,13 +35,35 @@ internal static class FixtureArchive
         return image.ToArray();
     }
 
+    public static byte[] ValidImage(
+        string extension,
+        int width,
+        int height)
+    {
+        IImageEncoder encoder = extension.ToLowerInvariant() switch
+        {
+            ".jpg" or ".jpeg" => new JpegEncoder(),
+            ".png" => new PngEncoder(),
+            ".webp" => new WebpEncoder(),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(extension),
+                extension,
+                "No deterministic image fixture is available for this extension.")
+        };
+
+        return EncodeImage(encoder, width, height);
+    }
+
     public static byte[] TruncatedPng() => Png1x1[..16];
 
     public static byte[] UnknownImage() => [0x00, 0x01, 0x02, 0x03];
 
-    private static byte[] EncodeImage(IImageEncoder encoder)
+    private static byte[] EncodeImage(
+        IImageEncoder encoder,
+        int width = 1,
+        int height = 1)
     {
-        using var image = new Image<Rgba32>(1, 1);
+        using var image = new Image<Rgba32>(width, height);
         using var stream = new MemoryStream();
         image.Save(stream, encoder);
         return stream.ToArray();
