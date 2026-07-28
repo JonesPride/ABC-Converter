@@ -1,3 +1,5 @@
+using Xunit;
+
 namespace ABC.Converter.Tests;
 
 public sealed class SolutionSmokeTests
