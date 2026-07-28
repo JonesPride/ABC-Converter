@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Globalization;
 using System.IO.Compression;
 using System.Text;
 using System.Xml.Linq;
@@ -234,6 +235,48 @@ public sealed class FixedLayoutEpubBuilderTests
     }
 
     [Fact]
+    public async Task WritesSingleUtcModifiedTimestamp()
+    {
+        using var files = new TemporaryFiles();
+        string cbz = files.Add(FixtureArchive.CreateCbz("page1.png"));
+        string epub = files.PathFor("book.epub");
+        var reader = new CbzArchiveReader();
+        ComicSource source = await reader.ReadAsync(cbz, CancellationToken.None);
+        var builder = new FixedLayoutEpubBuilder(reader);
+
+        await builder.BuildAsync(
+            source,
+            new ComicMetadata("Issue 1", "Example Series"),
+            ReadingDirection.LeftToRight,
+            epub,
+            CancellationToken.None);
+
+        using ZipArchive zip = ZipFile.OpenRead(epub);
+        XDocument package = await ReadXmlAsync(
+            GetEntry(zip, "EPUB/package.opf"));
+        XElement metadata = Assert.Single(
+            package.Descendants(OpfNamespace + "metadata"));
+        XElement modified = Assert.Single(
+            metadata.Elements(OpfNamespace + "meta"),
+            element =>
+                (string?)element.Attribute("property") == "dcterms:modified");
+        const string timestampFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'";
+        bool isValidTimestamp = DateTimeOffset.TryParseExact(
+            modified.Value,
+            timestampFormat,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal |
+                DateTimeStyles.AdjustToUniversal,
+            out DateTimeOffset timestamp);
+
+        Assert.True(isValidTimestamp);
+        Assert.Equal(TimeSpan.Zero, timestamp.Offset);
+        Assert.Equal(
+            timestamp.ToString(timestampFormat, CultureInfo.InvariantCulture),
+            modified.Value);
+    }
+
+    [Fact]
     public async Task WritesRightToLeftPageProgression()
     {
         using var files = new TemporaryFiles();
@@ -389,6 +432,34 @@ public sealed class FixedLayoutEpubBuilderTests
         string cbz = files.Add(FixtureArchive.CreateCbz(
             "page1.png",
             "page2.png"));
+        string epub = files.PathFor("book.epub");
+        var innerReader = new CbzArchiveReader();
+        ComicSource source = await innerReader.ReadAsync(
+            cbz,
+            CancellationToken.None);
+        using var cancellation = new CancellationTokenSource();
+        var reader = new CancelAfterFirstExtractionArchiveReader(
+            innerReader,
+            cancellation);
+        var builder = new FixedLayoutEpubBuilder(reader);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => builder.BuildAsync(
+                source,
+                new ComicMetadata("Issue 1", "Example Series"),
+                ReadingDirection.LeftToRight,
+                epub,
+                cancellation.Token));
+
+        Assert.Equal(1, reader.ExtractionCount);
+        Assert.False(File.Exists(epub));
+    }
+
+    [Fact]
+    public async Task CancellationAfterFinalImageRemovesDestination()
+    {
+        using var files = new TemporaryFiles();
+        string cbz = files.Add(FixtureArchive.CreateCbz("page1.png"));
         string epub = files.PathFor("book.epub");
         var innerReader = new CbzArchiveReader();
         ComicSource source = await innerReader.ReadAsync(
