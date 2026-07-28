@@ -8,6 +8,15 @@ namespace ABC.Converter.Infrastructure.Archives;
 
 public sealed class CbzArchiveReader : IComicArchiveReader
 {
+    private static readonly HashSet<string> ThumbnailDirectoryNames =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            "thumb",
+            "thumbs",
+            "thumbnail",
+            "thumbnails"
+        };
+
     private static readonly IReadOnlyDictionary<string, string> MediaTypes =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -39,11 +48,7 @@ public sealed class CbzArchiveReader : IComicArchiveReader
             cancellationToken.ThrowIfCancellationRequested();
 
             string normalizedPath = NormalizePath(entry.FullName);
-            string fileName = normalizedPath[(normalizedPath.LastIndexOf('/') + 1)..];
-            if (normalizedPath.StartsWith(
-                    "__MACOSX/",
-                    StringComparison.OrdinalIgnoreCase) ||
-                fileName.StartsWith("._", StringComparison.Ordinal))
+            if (ShouldIgnoreEntry(normalizedPath))
             {
                 continue;
             }
@@ -104,6 +109,43 @@ public sealed class CbzArchiveReader : IComicArchiveReader
 
     private static string NormalizePath(string path) =>
         path.Replace('\\', '/');
+
+    private static bool ShouldIgnoreEntry(string normalizedPath)
+    {
+        if (normalizedPath.StartsWith(
+                "__MACOSX/",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        string[] segments = normalizedPath.Split(
+            '/',
+            StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Any(segment => segment.StartsWith('.')))
+        {
+            return true;
+        }
+
+        if (segments
+            .SkipLast(1)
+            .Any(segment => ThumbnailDirectoryNames.Contains(segment)))
+        {
+            return true;
+        }
+
+        string fileBaseName = segments.Length == 0
+            ? string.Empty
+            : Path.GetFileNameWithoutExtension(segments[^1]);
+        return string.Equals(
+                fileBaseName,
+                "thumb",
+                StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(
+                fileBaseName,
+                "thumbnail",
+                StringComparison.OrdinalIgnoreCase);
+    }
 
     private static async Task<(int Width, int Height)> ReadDimensionsAsync(
         Stream stream,
