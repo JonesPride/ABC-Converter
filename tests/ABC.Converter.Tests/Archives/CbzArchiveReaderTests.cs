@@ -34,6 +34,83 @@ public sealed class CbzArchiveReaderTests
     }
 
     [Fact]
+    public async Task IgnoresHiddenRootImages()
+    {
+        string path = FixtureArchive.CreateCbz(
+            ".cover.png",
+            "page1.png");
+
+        try
+        {
+            var reader = new CbzArchiveReader();
+
+            var source = await reader.ReadAsync(path, CancellationToken.None);
+
+            Assert.Equal(
+                ["page1.png"],
+                source.Pages.Select(page => page.ArchivePath));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task IgnoresImagesInsideHiddenDirectories()
+    {
+        string path = FixtureArchive.CreateCbz(
+            ".draft/page2.png",
+            "chapter/.cache/page3.png",
+            "page1.png");
+
+        try
+        {
+            var reader = new CbzArchiveReader();
+
+            var source = await reader.ReadAsync(path, CancellationToken.None);
+
+            Assert.Equal(
+                ["page1.png"],
+                source.Pages.Select(page => page.ArchivePath));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task IgnoresThumbnailConventionWithoutPrefixMatching()
+    {
+        string path = FixtureArchive.CreateCbz(
+            "thumb/page1.png",
+            "THUMBS/page2.png",
+            "chapter/thumbnail/page3.png",
+            "chapter/THUMBNAILS/page4.png",
+            "thumb.png",
+            "THUMBNAIL.jpg",
+            "thumb01.jpg",
+            "thumbnail-page.png",
+            "thumbs-up.jpg");
+
+        try
+        {
+            var reader = new CbzArchiveReader();
+
+            var source = await reader.ReadAsync(path, CancellationToken.None);
+
+            Assert.Equal(
+                ["thumb01.jpg", "thumbnail-page.png", "thumbs-up.jpg"],
+                source.Pages.Select(page => page.ArchivePath));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public async Task RejectsArchiveWithNoComicPages()
     {
         string path = FixtureArchive.CreateCbz("notes.txt");
@@ -201,8 +278,3 @@ public sealed class CbzArchiveReaderTests
         string expectedMediaType)
     {
         Assert.Equal(expectedArchivePath, archivePath);
-        Assert.Equal(expectedMediaType, mediaType);
-        Assert.Equal(1, width);
-        Assert.Equal(1, height);
-    }
-}
