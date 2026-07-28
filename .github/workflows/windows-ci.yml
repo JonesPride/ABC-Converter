@@ -17,7 +17,7 @@ jobs:
         run: .\scripts\Setup.ps1
       - name: Build
         shell: pwsh
-        run: .\scripts\Build.ps1
+        run: .\scripts\Build.ps1 -Configuration Release
       - name: Test
         shell: pwsh
-        run: .\scripts\Test.ps1
+        run: .\scripts\Test.ps1 -Configuration Release
