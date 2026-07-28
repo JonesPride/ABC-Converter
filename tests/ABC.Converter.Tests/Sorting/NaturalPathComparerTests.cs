@@ -1,3 +1,4 @@
+using System;
 using ABC.Converter.Core.Sorting;
 using Xunit;
 
@@ -21,5 +22,31 @@ public sealed class NaturalPathComparerTests
         Assert.Equal(
             ["chapter1/page2.jpg", "chapter2/page1.jpg", "chapter10/page1.jpg"],
             names);
+    }
+
+    [Fact]
+    public void BreaksCaseInsensitiveNaturalTieWithOrdinalComparison()
+    {
+        const string left = "Page1.jpg";
+        const string right = "page1.jpg";
+        int actual = NaturalPathComparer.Instance.Compare(left, right);
+
+        Assert.NotEqual(0, actual);
+        Assert.Equal(
+            Math.Sign(StringComparer.Ordinal.Compare(left, right)),
+            Math.Sign(actual));
+    }
+
+    [Fact]
+    public void BreaksNormalizedPathTieWithOrdinalComparison()
+    {
+        const string left = "a\\page1.jpg";
+        const string right = "a/page1.jpg";
+        int actual = NaturalPathComparer.Instance.Compare(left, right);
+
+        Assert.NotEqual(0, actual);
+        Assert.Equal(
+            Math.Sign(StringComparer.Ordinal.Compare(left, right)),
+            Math.Sign(actual));
     }
 }
