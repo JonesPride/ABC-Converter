@@ -42,16 +42,17 @@ public sealed class FoundationAcceptanceTests
         ComicSource source = await reader.ReadAsync(
             sourcePath,
             CancellationToken.None);
-        Assert.Equal(
-            fixture.ExpectedArchivePaths,
-            source.Pages.Select(page => page.ArchivePath));
-        Assert.All(
-            source.Pages,
-            page =>
-            {
-                Assert.Equal(1, page.Width);
-                Assert.Equal(1, page.Height);
-            });
+        Assert.Equal(fixture.ExpectedPages.Length, source.Pages.Count);
+        for (int index = 0; index < fixture.ExpectedPages.Length; index++)
+        {
+            ExpectedPage expectedPage = fixture.ExpectedPages[index];
+            ComicPage actualPage = source.Pages[index];
+            Assert.NotEqual(expectedPage.Width, expectedPage.Height);
+            Assert.Equal(expectedPage.ArchivePath, actualPage.ArchivePath);
+            Assert.Equal(expectedPage.Width, actualPage.Width);
+            Assert.Equal(expectedPage.Height, actualPage.Height);
+        }
+
         var validator = new EpubStructureValidator();
         var service = new ComicConversionService(
             reader,
@@ -67,7 +68,11 @@ public sealed class FoundationAcceptanceTests
         Assert.Equal(source.Pages.Count, result.PageCount);
         Assert.True(File.Exists(result.OutputPath));
         Assert.Equal(sourceHash, await HashAsync(sourcePath));
-        await AssertPackageAsync(result.OutputPath, source, fixture.Direction);
+        await AssertPackageAsync(
+            result.OutputPath,
+            source,
+            fixture.ExpectedPages,
+            fixture.Direction);
         Assert.Empty(workspace.TemporaryOutputArtifacts());
     }
 
@@ -199,48 +204,78 @@ public sealed class FoundationAcceptanceTests
             "uppercase-cbz" => new(
                 "UPPERCASE.CBZ",
                 ReadingDirection.LeftToRight,
-                [("page1.png", FixtureArchive.ValidImage(".png"))],
-                ["page1.png"]),
+                [
+                    (
+                        "page1.png",
+                        FixtureArchive.ValidImage(".png", 101, 151))
+                ],
+                [new("page1.png", 101, 151)]),
             "nested-natural-order" => new(
                 "nested.cbz",
                 ReadingDirection.LeftToRight,
                 [
-                    ("chapter/page10.jpg", FixtureArchive.ValidImage(".jpg")),
-                    ("chapter/page2.png", FixtureArchive.ValidImage(".png"))
+                    (
+                        "chapter/page10.jpg",
+                        FixtureArchive.ValidImage(".jpg", 113, 173)),
+                    (
+                        "chapter/page2.png",
+                        FixtureArchive.ValidImage(".png", 211, 109))
                 ],
-                ["chapter/page2.png", "chapter/page10.jpg"]),
+                [
+                    new("chapter/page2.png", 211, 109),
+                    new("chapter/page10.jpg", 113, 173)
+                ]),
             "jpeg-pages" => new(
                 "jpeg.cbz",
                 ReadingDirection.LeftToRight,
                 [
-                    ("page1.jpg", FixtureArchive.ValidImage(".jpg")),
-                    ("page2.jpeg", FixtureArchive.ValidImage(".jpeg"))
+                    (
+                        "page1.jpg",
+                        FixtureArchive.ValidImage(".jpg", 127, 181)),
+                    (
+                        "page2.jpeg",
+                        FixtureArchive.ValidImage(".jpeg", 191, 131))
                 ],
-                ["page1.jpg", "page2.jpeg"]),
+                [
+                    new("page1.jpg", 127, 181),
+                    new("page2.jpeg", 191, 131)
+                ]),
             "webp-pages" => new(
                 "webp.cbz",
                 ReadingDirection.LeftToRight,
-                [("page1.webp", FixtureArchive.ValidImage(".webp"))],
-                ["page1.webp"]),
+                [
+                    (
+                        "page1.webp",
+                        FixtureArchive.ValidImage(".webp", 137, 199))
+                ],
+                [new("page1.webp", 137, 199)]),
             "unicode-and-spaces" => new(
                 "漫画 サンプル.cbz",
                 ReadingDirection.LeftToRight,
                 [
                     (
                         "章 1/ページ 1.png",
-                        FixtureArchive.ValidImage(".png"))
+                        FixtureArchive.ValidImage(".png", 211, 139))
                 ],
-                ["章 1/ページ 1.png"]),
+                [new("章 1/ページ 1.png", 211, 139)]),
             "left-to-right" => new(
                 "left-to-right.cbz",
                 ReadingDirection.LeftToRight,
-                [("page1.png", FixtureArchive.ValidImage(".png"))],
-                ["page1.png"]),
+                [
+                    (
+                        "page1.png",
+                        FixtureArchive.ValidImage(".png", 149, 223))
+                ],
+                [new("page1.png", 149, 223)]),
             "right-to-left" => new(
                 "right-to-left.cbz",
                 ReadingDirection.RightToLeft,
-                [("page1.webp", FixtureArchive.ValidImage(".webp"))],
-                ["page1.webp"]),
+                [
+                    (
+                        "page1.webp",
+                        FixtureArchive.ValidImage(".webp", 227, 151))
+                ],
+                [new("page1.webp", 227, 151)]),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(fixtureName),
                 fixtureName,
@@ -250,6 +285,7 @@ public sealed class FoundationAcceptanceTests
     private static async Task AssertPackageAsync(
         string epubPath,
         ComicSource source,
+        IReadOnlyList<ExpectedPage> expectedPages,
         ReadingDirection direction)
     {
         using ZipArchive packageArchive = ZipFile.OpenRead(epubPath);
@@ -286,26 +322,27 @@ public sealed class FoundationAcceptanceTests
 
         for (int index = 0; index < source.Pages.Count; index++)
         {
-            ComicPage expectedPage = source.Pages[index];
+            ComicPage sourcePage = source.Pages[index];
+            ExpectedPage expectedPage = expectedPages[index];
             int pageNumber = index + 1;
             string number = pageNumber.ToString("D4");
             XElement imageItem = Assert.Single(
                 imageItems,
                 item => (string?)item.Attribute("id") == $"image-{number}");
             Assert.Equal(
-                expectedPage.MediaType,
+                sourcePage.MediaType,
                 (string?)imageItem.Attribute("media-type"));
             Assert.Equal(
-                $"images/page-{number}{EpubImageExtension(expectedPage.MediaType)}",
+                $"images/page-{number}{EpubImageExtension(sourcePage.MediaType)}",
                 (string?)imageItem.Attribute("href"));
             Assert.Equal(
                 await ReadBytesAsync(
-                    GetEntry(sourceArchive, expectedPage.ArchivePath)),
+                    GetEntry(sourceArchive, sourcePage.ArchivePath)),
                 await ReadBytesAsync(
                     GetEntry(
                         packageArchive,
                         $"EPUB/images/page-{number}" +
-                        EpubImageExtension(expectedPage.MediaType))));
+                        EpubImageExtension(sourcePage.MediaType))));
 
             XDocument page = await ReadXmlAsync(
                 GetEntry(
@@ -395,7 +432,12 @@ public sealed class FoundationAcceptanceTests
         string SourceFileName,
         ReadingDirection Direction,
         (string EntryName, byte[] Contents)[] Entries,
-        string[] ExpectedArchivePaths);
+        ExpectedPage[] ExpectedPages);
+
+    private sealed record ExpectedPage(
+        string ArchivePath,
+        int Width,
+        int Height);
 
     private sealed class AcceptanceWorkspace : IDisposable
     {
