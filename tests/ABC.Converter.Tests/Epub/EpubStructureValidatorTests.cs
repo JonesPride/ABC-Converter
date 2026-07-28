@@ -144,7 +144,37 @@ public sealed class EpubStructureValidatorTests
                 Entry("EPUB/package.opf", PackageOpf())
             ],
             writeBeforeMimetype: true);
+        Assert.Equal((ushort)0, ReadFirstLocalCompressionMethod(epub));
         RewriteCentralDirectoryWithMimetypeFirst(epub);
+        var validator = new EpubStructureValidator();
+
+        await AssertInvalidAsync(
+            () => validator.ValidateAsync(epub, CancellationToken.None),
+            "mimetype");
+    }
+
+    [Fact]
+    public async Task RejectsInvalidPhysicalMimetypeWhenCentralFirstDuplicateIsValid()
+    {
+        using var files = new TemporaryDirectory();
+        string epub = files.PathFor("duplicate-mimetype.epub");
+        WriteEpub(
+            epub,
+            "EPUB/package.opf",
+            [
+                Entry("EPUB/nav.xhtml", ValidXhtml()),
+                Entry("EPUB/images/cover.png", [0x89, 0x50, 0x4E, 0x47]),
+                Entry("EPUB/pages/page.xhtml", ValidXhtml()),
+                Entry("EPUB/package.opf", PackageOpf()),
+                Entry(
+                    "mimetype",
+                    Encoding.ASCII.GetBytes("application/epub+zip"),
+                    CompressionLevel.NoCompression)
+            ],
+            mimetypeContent: "12345678901234567890");
+        RewriteCentralDirectoryWithMimetypeFirst(
+            epub,
+            selectLastMimetype: true);
         var validator = new EpubStructureValidator();
 
         await AssertInvalidAsync(
@@ -399,8 +429,11 @@ public sealed class EpubStructureValidatorTests
     private static ArchiveEntry Entry(string path, string contents) =>
         Entry(path, Encoding.UTF8.GetBytes(contents));
 
-    private static ArchiveEntry Entry(string path, byte[] contents) =>
-        new(path, contents);
+    private static ArchiveEntry Entry(
+        string path,
+        byte[] contents,
+        CompressionLevel compression = CompressionLevel.Optimal) =>
+        new(path, contents, compression);
 
     private static string ContainerXml(string packagePath) =>
         $"""
@@ -451,7 +484,11 @@ public sealed class EpubStructureValidatorTests
         using var archive = new ZipArchive(stream, ZipArchiveMode.Create);
         if (writeBeforeMimetype)
         {
-            WriteEntry(archive, "before-mimetype", [0x00]);
+            WriteEntry(
+                archive,
+                "before-mimetype",
+                [0x00],
+                CompressionLevel.NoCompression);
         }
 
         if (includeMimetype)
@@ -471,7 +508,7 @@ public sealed class EpubStructureValidatorTests
         }
         foreach (ArchiveEntry entry in entries)
         {
-            WriteEntry(archive, entry.Path, entry.Contents);
+            WriteEntry(archive, entry.Path, entry.Contents, entry.Compression);
         }
     }
 
@@ -486,7 +523,15 @@ public sealed class EpubStructureValidatorTests
         stream.Write(contents);
     }
 
-    private static void RewriteCentralDirectoryWithMimetypeFirst(string path)
+    private static ushort ReadFirstLocalCompressionMethod(string path)
+    {
+        byte[] header = File.ReadAllBytes(path)[..10];
+        return BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(8, 2));
+    }
+
+    private static void RewriteCentralDirectoryWithMimetypeFirst(
+        string path,
+        bool selectLastMimetype = false)
     {
         byte[] archive = File.ReadAllBytes(path);
         int endOfCentralDirectory = FindEndOfCentralDirectory(archive);
@@ -506,9 +551,12 @@ public sealed class EpubStructureValidatorTests
         }
 
         Assert.Equal(centralDirectoryEnd, offset);
-        CentralDirectoryRecord mimetype = Assert.Single(
-            records,
-            record => record.Name == "mimetype");
+        CentralDirectoryRecord[] mimetypes = records
+            .Where(record => record.Name == "mimetype")
+            .ToArray();
+        CentralDirectoryRecord mimetype = selectLastMimetype
+            ? mimetypes[^1]
+            : Assert.Single(mimetypes);
         byte[] reordered = records
             .Where(record => record != mimetype)
             .Prepend(mimetype)
@@ -561,7 +609,10 @@ public sealed class EpubStructureValidatorTests
         return new CentralDirectoryRecord(name, bytes);
     }
 
-    private sealed record ArchiveEntry(string Path, byte[] Contents);
+    private sealed record ArchiveEntry(
+        string Path,
+        byte[] Contents,
+        CompressionLevel Compression = CompressionLevel.Optimal);
 
     private sealed record CentralDirectoryRecord(string Name, byte[] Bytes);
 
