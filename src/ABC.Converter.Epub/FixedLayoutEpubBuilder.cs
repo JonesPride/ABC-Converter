@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO.Compression;
 using System.Text;
 using System.Xml.Linq;
@@ -68,6 +69,7 @@ public sealed class FixedLayoutEpubBuilder(
                         cancellationToken);
                 }
 
+                cancellationToken.ThrowIfCancellationRequested();
                 WriteText(
                     zip,
                     $"EPUB/pages/page-{number}.xhtml",
@@ -78,10 +80,12 @@ public sealed class FixedLayoutEpubBuilder(
                         page.Height));
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             WriteText(
                 zip,
                 "EPUB/nav.xhtml",
                 NavigationXhtml(metadata, source.Pages.Count));
+            cancellationToken.ThrowIfCancellationRequested();
             WriteText(
                 zip,
                 "EPUB/package.opf",
@@ -305,6 +309,14 @@ public sealed class FixedLayoutEpubBuilder(
                         identifier),
                     new XElement(dc + "title", metadata.Title),
                     new XElement(dc + "language", metadata.Language),
+                    new XElement(
+                        opf + "meta",
+                        new XAttribute(
+                            "property",
+                            "dcterms:modified"),
+                        DateTimeOffset.UtcNow.ToString(
+                            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                            CultureInfo.InvariantCulture)),
                     new XElement(
                         opf + "meta",
                         new XAttribute(
