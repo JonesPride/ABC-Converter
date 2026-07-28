@@ -10,7 +10,7 @@ namespace ABC.Converter.App.Tests.TestSupport;
 internal static class ConversionHarness
 {
     public static ComicConversionService CreateService(
-        RecordingArchiveReader? reader = null)
+        IComicArchiveReader? reader = null)
     {
         return new ComicConversionService(
             reader ?? new RecordingArchiveReader(),
