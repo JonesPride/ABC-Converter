@@ -355,10 +355,12 @@ public sealed class EpubStructureValidatorTests
         new(path, contents);
 
     private static string ContainerXml(string packagePath) =>
-        $"""<?xml version="1.0" encoding="utf-8"?>
+        $"""
+        <?xml version="1.0" encoding="utf-8"?>
         <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
           <rootfiles><rootfile full-path="{packagePath}" media-type="application/oebps-package+xml" /></rootfiles>
-        </container>""";
+        </container>
+        """;
 
     private static string PackageOpf(
         string navigationProperties = "nav",
@@ -367,7 +369,8 @@ public sealed class EpubStructureValidatorTests
         bool includeDuplicateNavigation = false,
         bool includeDuplicateCover = false,
         bool includeSupplementalXhtml = false) =>
-        $"""<?xml version="1.0" encoding="utf-8"?>
+        $"""
+        <?xml version="1.0" encoding="utf-8"?>
         <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
           <metadata />
           <manifest>
@@ -379,7 +382,8 @@ public sealed class EpubStructureValidatorTests
             {(includeSupplementalXhtml ? "<item id=\"bonus\" href=\"pages/bonus.xhtml\" media-type=\"application/xhtml+xml\" />" : string.Empty)}
           </manifest>
           <spine><itemref idref="{spineIdref}" /></spine>
-        </package>""";
+        </package>
+        """;
 
     private static string ValidXhtml() =>
         "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>Page</title></head><body /></html>";
