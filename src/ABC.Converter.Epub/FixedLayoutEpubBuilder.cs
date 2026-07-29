@@ -319,12 +319,14 @@ public sealed class FixedLayoutEpubBuilder(
                             CultureInfo.InvariantCulture)),
                     new XElement(
                         opf + "meta",
+                        new XAttribute("id", "series"),
                         new XAttribute(
                             "property",
                             "belongs-to-collection"),
                         metadata.Series),
                     new XElement(
                         opf + "meta",
+                        new XAttribute("refines", "#series"),
                         new XAttribute(
                             "property",
                             "collection-type"),
