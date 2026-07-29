@@ -26,6 +26,20 @@ public sealed class CbzArchiveReader : IComicArchiveReader
             [".webp"] = "image/webp"
         };
 
+    private readonly CbzArchiveLimits limits;
+
+    public CbzArchiveReader()
+        : this(CbzArchiveLimits.Default)
+    {
+    }
+
+    public CbzArchiveReader(CbzArchiveLimits limits)
+    {
+        ArgumentNullException.ThrowIfNull(limits);
+        limits.Validate();
+        this.limits = limits;
+    }
+
     public async Task<ComicSource> ReadAsync(
         string sourcePath,
         CancellationToken cancellationToken)
@@ -42,6 +56,7 @@ public sealed class CbzArchiveReader : IComicArchiveReader
 
         using ZipArchive zip = ZipFile.OpenRead(sourcePath);
         var pages = new List<ComicPage>();
+        long totalUncompressedBytes = 0;
 
         foreach (ZipArchiveEntry entry in zip.Entries)
         {
@@ -59,11 +74,37 @@ public sealed class CbzArchiveReader : IComicArchiveReader
                 continue;
             }
 
+            if (pages.Count >= limits.MaxPageCount)
+            {
+                throw new InvalidDataException(
+                    $"The CBZ page count exceeds the limit of {limits.MaxPageCount:N0}.");
+            }
+
+            ValidateEntry(entry);
+            try
+            {
+                totalUncompressedBytes = checked(totalUncompressedBytes + entry.Length);
+            }
+            catch (OverflowException exception)
+            {
+                throw new InvalidDataException(
+                    "The CBZ total uncompressed size is invalid.",
+                    exception);
+            }
+
+            if (totalUncompressedBytes > limits.MaxTotalUncompressedBytes)
+            {
+                throw new InvalidDataException(
+                    $"The CBZ total uncompressed size exceeds the limit of " +
+                    $"{limits.MaxTotalUncompressedBytes:N0} bytes.");
+            }
+
             await using Stream stream = entry.Open();
             (int width, int height) = await ReadDimensionsAsync(
                 stream,
                 mediaType,
                 cancellationToken);
+            ValidateDimensions(normalizedPath, width, height);
             pages.Add(new ComicPage(normalizedPath, mediaType, width, height));
         }
 
@@ -103,8 +144,85 @@ public sealed class CbzArchiveReader : IComicArchiveReader
                 $"Missing archive page: {page.ArchivePath}");
         }
 
+        ValidateEntry(entry);
         await using Stream source = entry.Open();
-        await source.CopyToAsync(destination, cancellationToken);
+        await CopyWithLimitAsync(
+            source,
+            destination,
+            limits.MaxEntryUncompressedBytes,
+            cancellationToken);
+    }
+
+    private void ValidateEntry(ZipArchiveEntry entry)
+    {
+        if (entry.CompressedLength > limits.MaxEntryCompressedBytes)
+        {
+            throw new InvalidDataException(
+                $"Archive entry '{entry.FullName}' compressed size exceeds the limit of " +
+                $"{limits.MaxEntryCompressedBytes:N0} bytes.");
+        }
+
+        if (entry.Length > limits.MaxEntryUncompressedBytes)
+        {
+            throw new InvalidDataException(
+                $"Archive entry '{entry.FullName}' uncompressed size exceeds the limit of " +
+                $"{limits.MaxEntryUncompressedBytes:N0} bytes.");
+        }
+
+        double compressionRatio = entry.CompressedLength == 0
+            ? entry.Length == 0 ? 1 : double.PositiveInfinity
+            : (double)entry.Length / entry.CompressedLength;
+        if (compressionRatio > limits.MaxCompressionRatio)
+        {
+            throw new InvalidDataException(
+                $"Archive entry '{entry.FullName}' compression ratio exceeds the limit of " +
+                $"{limits.MaxCompressionRatio:N0}:1.");
+        }
+    }
+
+    private void ValidateDimensions(string archivePath, int width, int height)
+    {
+        if (width > limits.MaxImageWidth || height > limits.MaxImageHeight)
+        {
+            throw new InvalidDataException(
+                $"Image '{archivePath}' dimensions {width:N0}x{height:N0} exceed the " +
+                $"limit of {limits.MaxImageWidth:N0}x{limits.MaxImageHeight:N0}.");
+        }
+
+        long pixelCount = checked((long)width * height);
+        if (pixelCount > limits.MaxImagePixels)
+        {
+            throw new InvalidDataException(
+                $"Image '{archivePath}' pixel count exceeds the limit of " +
+                $"{limits.MaxImagePixels:N0}.");
+        }
+    }
+
+    private static async Task CopyWithLimitAsync(
+        Stream source,
+        Stream destination,
+        long maxBytes,
+        CancellationToken cancellationToken)
+    {
+        byte[] buffer = new byte[81_920];
+        long copied = 0;
+        while (true)
+        {
+            int read = await source.ReadAsync(buffer, cancellationToken);
+            if (read == 0)
+            {
+                return;
+            }
+
+            copied = checked(copied + read);
+            if (copied > maxBytes)
+            {
+                throw new InvalidDataException(
+                    $"Extracted archive entry exceeds the limit of {maxBytes:N0} bytes.");
+            }
+
+            await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+        }
     }
 
     private static string NormalizePath(string path) =>
