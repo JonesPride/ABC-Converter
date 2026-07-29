@@ -1,0 +1,23 @@
+name: Windows CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Restore
+        shell: pwsh
+        run: .\scripts\Setup.ps1
+      - name: Build
+        shell: pwsh
+        run: .\scripts\Build.ps1 -Configuration Release
+      - name: Test
+        shell: pwsh
+        run: .\scripts\Test.ps1 -Configuration Release
