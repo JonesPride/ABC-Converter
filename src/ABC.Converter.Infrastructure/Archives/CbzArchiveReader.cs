@@ -11,10 +11,7 @@ public sealed class CbzArchiveReader : IComicArchiveReader
     private static readonly HashSet<string> ThumbnailDirectoryNames =
         new(StringComparer.OrdinalIgnoreCase)
         {
-            "thumb",
-            "thumbs",
-            "thumbnail",
-            "thumbnails"
+            "thumb", "thumbs", "thumbnail", "thumbnails"
         };
 
     private static readonly IReadOnlyDictionary<string, string> MediaTypes =
@@ -55,7 +52,7 @@ public sealed class CbzArchiveReader : IComicArchiveReader
         cancellationToken.ThrowIfCancellationRequested();
 
         using ZipArchive zip = ZipFile.OpenRead(sourcePath);
-        var pages = new List<ComicPage>();
+        var pageEntries = new List<(ZipArchiveEntry Entry, string Path, string MediaType)>();
         long totalUncompressedBytes = 0;
 
         foreach (ZipArchiveEntry entry in zip.Entries)
@@ -74,7 +71,7 @@ public sealed class CbzArchiveReader : IComicArchiveReader
                 continue;
             }
 
-            if (pages.Count >= limits.MaxPageCount)
+            if (pageEntries.Count >= limits.MaxPageCount)
             {
                 throw new InvalidDataException(
                     $"The CBZ page count exceeds the limit of {limits.MaxPageCount:N0}.");
@@ -99,6 +96,19 @@ public sealed class CbzArchiveReader : IComicArchiveReader
                     $"{limits.MaxTotalUncompressedBytes:N0} bytes.");
             }
 
+            pageEntries.Add((entry, normalizedPath, mediaType));
+        }
+
+        if (pageEntries.Count == 0)
+        {
+            throw new InvalidDataException(
+                "The CBZ contains no supported page images.");
+        }
+
+        var pages = new List<ComicPage>(pageEntries.Count);
+        foreach ((ZipArchiveEntry entry, string normalizedPath, string mediaType) in pageEntries)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             await using Stream stream = entry.Open();
             (int width, int height) = await ReadDimensionsAsync(
                 stream,
@@ -112,12 +122,6 @@ public sealed class CbzArchiveReader : IComicArchiveReader
             (left, right) => NaturalPathComparer.Instance.Compare(
                 left.ArchivePath,
                 right.ArchivePath));
-
-        if (pages.Count == 0)
-        {
-            throw new InvalidDataException(
-                "The CBZ contains no supported page images.");
-        }
 
         return new ComicSource(Path.GetFullPath(sourcePath), pages, 0)
         {
@@ -258,14 +262,8 @@ public sealed class CbzArchiveReader : IComicArchiveReader
         string fileBaseName = segments.Length == 0
             ? string.Empty
             : Path.GetFileNameWithoutExtension(segments[^1]);
-        return string.Equals(
-                fileBaseName,
-                "thumb",
-                StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(
-                fileBaseName,
-                "thumbnail",
-                StringComparison.OrdinalIgnoreCase);
+        return string.Equals(fileBaseName, "thumb", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(fileBaseName, "thumbnail", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<(int Width, int Height)> ReadDimensionsAsync(
@@ -275,10 +273,7 @@ public sealed class CbzArchiveReader : IComicArchiveReader
     {
         try
         {
-            ImageInfo? info = await Image.IdentifyAsync(
-                stream,
-                cancellationToken);
-
+            ImageInfo? info = await Image.IdentifyAsync(stream, cancellationToken);
             if (info is null)
             {
                 throw new InvalidDataException(
