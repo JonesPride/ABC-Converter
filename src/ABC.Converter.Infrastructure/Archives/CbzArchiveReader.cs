@@ -41,14 +41,7 @@ public sealed class CbzArchiveReader : IComicArchiveReader
         string sourcePath,
         CancellationToken cancellationToken)
     {
-        if (!string.Equals(
-                Path.GetExtension(sourcePath),
-                ".cbz",
-                StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidDataException("Only CBZ files are supported.");
-        }
-
+        ValidateSourceExtension(sourcePath);
         cancellationToken.ThrowIfCancellationRequested();
 
         using ZipArchive zip = ZipFile.OpenRead(sourcePath);
@@ -129,34 +122,28 @@ public sealed class CbzArchiveReader : IComicArchiveReader
         };
     }
 
+    public Task<IComicArchiveSession> OpenSessionAsync(
+        string sourcePath,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateSourceExtension(sourcePath);
+        return Task.FromResult<IComicArchiveSession>(
+            new CbzArchiveSession(this, sourcePath));
+    }
+
     public async Task ExtractPageAsync(
         string sourcePath,
         ComicPage page,
         Stream destination,
         CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        using ZipArchive zip = ZipFile.OpenRead(sourcePath);
-        ZipArchiveEntry? entry = zip.GetEntry(page.ArchivePath) ??
-            zip.Entries.FirstOrDefault(
-                candidate => string.Equals(
-                    NormalizePath(candidate.FullName),
-                    page.ArchivePath,
-                    StringComparison.Ordinal));
-
-        if (entry is null)
-        {
-            throw new InvalidDataException(
-                $"Missing archive page: {page.ArchivePath}");
-        }
-
-        ValidateEntry(entry);
-        await using Stream source = entry.Open();
-        await CopyWithLimitAsync(
-            source,
+        await using IComicArchiveSession session = await OpenSessionAsync(
+            sourcePath,
+            cancellationToken);
+        await session.ExtractPageAsync(
+            page,
             destination,
-            limits.MaxEntryUncompressedBytes,
             cancellationToken);
     }
 
@@ -264,6 +251,73 @@ public sealed class CbzArchiveReader : IComicArchiveReader
             : Path.GetFileNameWithoutExtension(segments[^1]);
         return string.Equals(fileBaseName, "thumb", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(fileBaseName, "thumbnail", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void ValidateSourceExtension(string sourcePath)
+    {
+        if (!string.Equals(
+                Path.GetExtension(sourcePath),
+                ".cbz",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException("Only CBZ files are supported.");
+        }
+    }
+
+    private sealed class CbzArchiveSession : IComicArchiveSession
+    {
+        private readonly CbzArchiveReader owner;
+        private readonly ZipArchive archive;
+        private bool disposed;
+
+        public CbzArchiveSession(
+            CbzArchiveReader owner,
+            string sourcePath)
+        {
+            this.owner = owner;
+            archive = ZipFile.OpenRead(sourcePath);
+        }
+
+        public async Task ExtractPageAsync(
+            ComicPage page,
+            Stream destination,
+            CancellationToken cancellationToken)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            ZipArchiveEntry? entry = archive.GetEntry(page.ArchivePath) ??
+                archive.Entries.FirstOrDefault(
+                    candidate => string.Equals(
+                        NormalizePath(candidate.FullName),
+                        page.ArchivePath,
+                        StringComparison.Ordinal));
+
+            if (entry is null)
+            {
+                throw new InvalidDataException(
+                    $"Missing archive page: {page.ArchivePath}");
+            }
+
+            owner.ValidateEntry(entry);
+            await using Stream source = entry.Open();
+            await CopyWithLimitAsync(
+                source,
+                destination,
+                owner.limits.MaxEntryUncompressedBytes,
+                cancellationToken);
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            if (!disposed)
+            {
+                archive.Dispose();
+                disposed = true;
+            }
+
+            return ValueTask.CompletedTask;
+        }
     }
 
     private static async Task<(int Width, int Height)> ReadDimensionsAsync(
