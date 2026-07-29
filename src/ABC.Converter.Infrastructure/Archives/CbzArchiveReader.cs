@@ -119,7 +119,10 @@ public sealed class CbzArchiveReader : IComicArchiveReader
                 "The CBZ contains no supported page images.");
         }
 
-        return new ComicSource(Path.GetFullPath(sourcePath), pages, 0);
+        return new ComicSource(Path.GetFullPath(sourcePath), pages, 0)
+        {
+            TotalUncompressedBytes = totalUncompressedBytes
+        };
     }
 
     public async Task ExtractPageAsync(
