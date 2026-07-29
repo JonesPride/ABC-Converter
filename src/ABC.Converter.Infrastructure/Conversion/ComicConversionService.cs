@@ -5,12 +5,30 @@ using ABC.Converter.Core.Models;
 
 namespace ABC.Converter.Infrastructure.Conversion;
 
-public sealed class ComicConversionService(
-    IComicArchiveReader archiveReader,
-    IEpubBuilder epubBuilder,
-    IEpubValidator validator,
-    IOutputPathPolicy outputPathPolicy)
+public sealed class ComicConversionService
 {
+    private const long MinimumWorkingSpaceBytes = 64L * 1024 * 1024;
+
+    private readonly IComicArchiveReader archiveReader;
+    private readonly IEpubBuilder epubBuilder;
+    private readonly IEpubValidator validator;
+    private readonly IOutputPathPolicy outputPathPolicy;
+    private readonly IFreeSpaceProvider freeSpaceProvider;
+
+    public ComicConversionService(
+        IComicArchiveReader archiveReader,
+        IEpubBuilder epubBuilder,
+        IEpubValidator validator,
+        IOutputPathPolicy outputPathPolicy,
+        IFreeSpaceProvider? freeSpaceProvider = null)
+    {
+        this.archiveReader = archiveReader;
+        this.epubBuilder = epubBuilder;
+        this.validator = validator;
+        this.outputPathPolicy = outputPathPolicy;
+        this.freeSpaceProvider = freeSpaceProvider ?? new DriveFreeSpaceProvider();
+    }
+
     public async Task<ConversionResult> ConvertAsync(
         ConversionRequest request,
         CancellationToken cancellationToken)
@@ -28,6 +46,7 @@ public sealed class ComicConversionService(
             request.Metadata);
         string outputDirectory = Path.GetDirectoryName(outputPath)!;
         Directory.CreateDirectory(outputDirectory);
+        EnsureSufficientFreeSpace(outputDirectory, source, sourceLength);
 
         string tempPath = Path.Combine(
             outputDirectory,
@@ -69,6 +88,33 @@ public sealed class ComicConversionService(
             {
                 File.Delete(tempPath);
             }
+        }
+    }
+
+    private void EnsureSufficientFreeSpace(
+        string outputDirectory,
+        ComicSource source,
+        long sourceLength)
+    {
+        long estimatedPayload = Math.Max(source.TotalUncompressedBytes, sourceLength);
+        long proportionalReserve = estimatedPayload / 20;
+        long workingReserve = Math.Max(MinimumWorkingSpaceBytes, proportionalReserve);
+        long requiredBytes;
+        try
+        {
+            requiredBytes = checked(estimatedPayload + workingReserve);
+        }
+        catch (OverflowException exception)
+        {
+            throw new IOException("The estimated output size is too large.", exception);
+        }
+
+        long availableBytes = freeSpaceProvider.GetAvailableBytes(outputDirectory);
+        if (availableBytes < requiredBytes)
+        {
+            throw new IOException(
+                $"Insufficient free space for conversion. Required: {requiredBytes:N0} bytes; " +
+                $"available: {availableBytes:N0} bytes.");
         }
     }
 }
