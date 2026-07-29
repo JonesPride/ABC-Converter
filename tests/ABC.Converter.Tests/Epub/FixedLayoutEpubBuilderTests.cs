@@ -142,12 +142,17 @@ public sealed class FixedLayoutEpubBuilderTests
             metadata.Language,
             Assert.Single(
                 metadataElement.Elements(DublinCoreNamespace + "language")).Value);
-        Assert.Equal(
-            metadata.Series,
-            FindMetadata(metadataElement, "belongs-to-collection").Value);
-        Assert.Equal(
-            "series",
-            FindMetadata(metadataElement, "collection-type").Value);
+        XElement collection = FindMetadata(
+            metadataElement,
+            "belongs-to-collection");
+        Assert.Equal(metadata.Series, collection.Value);
+        Assert.Equal("series", (string?)collection.Attribute("id"));
+
+        XElement collectionType = FindMetadata(
+            metadataElement,
+            "collection-type");
+        Assert.Equal("series", collectionType.Value);
+        Assert.Equal("#series", (string?)collectionType.Attribute("refines"));
         Assert.Equal(
             "pre-paginated",
             FindMetadata(metadataElement, "rendition:layout").Value);
