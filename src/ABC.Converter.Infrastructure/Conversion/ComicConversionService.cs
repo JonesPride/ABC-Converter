@@ -14,19 +14,27 @@ public sealed class ComicConversionService
     private readonly IEpubValidator validator;
     private readonly IOutputPathPolicy outputPathPolicy;
     private readonly IFreeSpaceProvider freeSpaceProvider;
+    private readonly ITemporaryFileCleaner temporaryFileCleaner;
+    private readonly Action<string, Exception> onTemporaryCleanupFailure;
 
     public ComicConversionService(
         IComicArchiveReader archiveReader,
         IEpubBuilder epubBuilder,
         IEpubValidator validator,
         IOutputPathPolicy outputPathPolicy,
-        IFreeSpaceProvider? freeSpaceProvider = null)
+        IFreeSpaceProvider? freeSpaceProvider = null,
+        ITemporaryFileCleaner? temporaryFileCleaner = null,
+        Action<string, Exception>? onTemporaryCleanupFailure = null)
     {
         this.archiveReader = archiveReader;
         this.epubBuilder = epubBuilder;
         this.validator = validator;
         this.outputPathPolicy = outputPathPolicy;
         this.freeSpaceProvider = freeSpaceProvider ?? new DriveFreeSpaceProvider();
+        this.temporaryFileCleaner =
+            temporaryFileCleaner ?? new FileSystemTemporaryFileCleaner();
+        this.onTemporaryCleanupFailure =
+            onTemporaryCleanupFailure ?? ReportTemporaryCleanupFailure;
     }
 
     public async Task<ConversionResult> ConvertAsync(
@@ -84,11 +92,48 @@ public sealed class ComicConversionService
         }
         finally
         {
-            if (File.Exists(tempPath))
+            TryDeleteTemporaryFile(tempPath);
+        }
+    }
+
+    private void TryDeleteTemporaryFile(string tempPath)
+    {
+        if (!File.Exists(tempPath))
+        {
+            return;
+        }
+
+        try
+        {
+            temporaryFileCleaner.Delete(tempPath);
+        }
+        catch (Exception exception) when (
+            exception is IOException or
+            UnauthorizedAccessException or
+            NotSupportedException)
+        {
+            try
             {
-                File.Delete(tempPath);
+                onTemporaryCleanupFailure(tempPath, exception);
+            }
+            catch (Exception reportingException)
+            {
+                System.Diagnostics.Trace.TraceError(
+                    "Failed to report leftover temporary file '{0}': {1}",
+                    tempPath,
+                    reportingException);
             }
         }
+    }
+
+    private static void ReportTemporaryCleanupFailure(
+        string tempPath,
+        Exception exception)
+    {
+        System.Diagnostics.Trace.TraceWarning(
+            "Could not delete temporary file '{0}'. It was left for later cleanup. {1}",
+            tempPath,
+            exception);
     }
 
     private void EnsureSufficientFreeSpace(
