@@ -11,7 +11,13 @@ public sealed class SeriesOutputPathPolicy : IOutputPathPolicy
     private static readonly HashSet<char> WindowsInvalidCharacters =
         new("<>:\"/\\|?*".ToCharArray());
 
-    public string GetOutputPath(string outputRoot, ComicMetadata metadata)
+    public string GetOutputPath(string outputRoot, ComicMetadata metadata) =>
+        GetOutputPath(outputRoot, metadata, string.Empty);
+
+    public string GetOutputPath(
+        string outputRoot,
+        ComicMetadata metadata,
+        string sourcePath)
     {
         string series = SanitizeRequired(metadata.Series);
         string? volume = SanitizeOptional(metadata.Volume);
@@ -40,30 +46,46 @@ public sealed class SeriesOutputPathPolicy : IOutputPathPolicy
             : Path.Combine(outputRoot, series, group);
         string preferred = Path.Combine(directory, fileName);
 
-        return File.Exists(preferred)
-            ? AlternatePath(directory, fileName, metadata)
-            : preferred;
-    }
+        if (!File.Exists(preferred))
+        {
+            return preferred;
+        }
 
-    private static string AlternatePath(
-        string directory,
-        string fileName,
-        ComicMetadata metadata)
-    {
-        string fingerprint = MetadataFingerprint(metadata);
+        string fingerprint = MetadataFingerprint(metadata, sourcePath);
         string baseName = Path.GetFileNameWithoutExtension(fileName);
-        return Path.Combine(directory, $"{baseName} ({fingerprint}).epub");
+        string alternate = Path.Combine(directory, $"{baseName} ({fingerprint}).epub");
+        if (!File.Exists(alternate))
+        {
+            return alternate;
+        }
+
+        for (int suffix = 2; ; suffix++)
+        {
+            string candidate = Path.Combine(
+                directory,
+                $"{baseName} ({fingerprint}) ({suffix}).epub");
+            if (!File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
     }
 
-    private static string MetadataFingerprint(ComicMetadata metadata)
+    private static string MetadataFingerprint(
+        ComicMetadata metadata,
+        string sourcePath)
     {
+        string sourceIdentity = string.IsNullOrWhiteSpace(sourcePath)
+            ? string.Empty
+            : Path.GetFullPath(sourcePath);
         string canonical = string.Join(
             "\u001F",
             metadata.Series,
             metadata.Volume,
             metadata.IssueNumber,
             metadata.Title,
-            metadata.PublicationYear?.ToString(CultureInfo.InvariantCulture));
+            metadata.PublicationYear?.ToString(CultureInfo.InvariantCulture),
+            sourceIdentity);
         byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(canonical));
         return Convert.ToHexString(hash[..4]).ToLowerInvariant();
     }
