@@ -184,6 +184,41 @@ public sealed class ComicConversionServiceTests
     }
 
     [Fact]
+    public async Task PreservesPrimaryFailureWhenTemporaryCleanupFails()
+    {
+        using var files = new TemporaryDirectory();
+        string sourcePath = files.Write("source.cbz", [0x01]);
+        string outputPath = files.PathFor("output/book.epub");
+        string? leftoverPath = null;
+        Exception? cleanupFailure = null;
+        var service = new ComicConversionService(
+            new DelegatingArchiveReader(),
+            new DelegatingEpubBuilder((_, _, _, destination, _) =>
+            {
+                File.WriteAllBytes(destination, [0x45, 0x50, 0x55, 0x42]);
+                return Task.FromException(new InvalidDataException("primary build failure"));
+            }),
+            new DelegatingValidator((_, _) => Task.CompletedTask),
+            new DelegatingOutputPathPolicy((_, _) => outputPath),
+            temporaryFileCleaner: new ThrowingTemporaryFileCleaner(),
+            onTemporaryCleanupFailure: (path, exception) =>
+            {
+                leftoverPath = path;
+                cleanupFailure = exception;
+            });
+
+        InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(
+            () => service.ConvertAsync(Request(sourcePath, files.Path), CancellationToken.None));
+
+        Assert.Equal("primary build failure", error.Message);
+        Assert.NotNull(leftoverPath);
+        Assert.True(File.Exists(leftoverPath));
+        Assert.IsType<UnauthorizedAccessException>(cleanupFailure);
+
+        File.Delete(leftoverPath);
+    }
+
+    [Fact]
     public async Task RejectsPublicationWhenTheSourceChangesDuringConversion()
     {
         using var files = new TemporaryDirectory();
@@ -329,6 +364,12 @@ public sealed class ComicConversionServiceTests
     {
         public string GetOutputPath(string outputRoot, ComicMetadata metadata) =>
             outputPath(outputRoot, metadata);
+    }
+
+    private sealed class ThrowingTemporaryFileCleaner : ITemporaryFileCleaner
+    {
+        public void Delete(string path) =>
+            throw new UnauthorizedAccessException("cleanup failure");
     }
 
     private sealed class TemporaryDirectory : IDisposable
