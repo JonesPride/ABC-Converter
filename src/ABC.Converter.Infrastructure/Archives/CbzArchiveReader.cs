@@ -46,6 +46,7 @@ public sealed class CbzArchiveReader : IComicArchiveReader
 
         using ZipArchive zip = ZipFile.OpenRead(sourcePath);
         var pageEntries = new List<(ZipArchiveEntry Entry, string Path, string MediaType)>();
+        var normalizedPagePaths = new HashSet<string>(StringComparer.Ordinal);
         long totalUncompressedBytes = 0;
 
         foreach (ZipArchiveEntry entry in zip.Entries)
@@ -62,6 +63,12 @@ public sealed class CbzArchiveReader : IComicArchiveReader
             if (!MediaTypes.TryGetValue(extension, out string? mediaType))
             {
                 continue;
+            }
+
+            if (!normalizedPagePaths.Add(normalizedPath))
+            {
+                throw new InvalidDataException(
+                    $"The CBZ contains duplicate normalized page path '{normalizedPath}'.");
             }
 
             if (pageEntries.Count >= limits.MaxPageCount)
