@@ -26,7 +26,8 @@ public partial class App : Application
         var viewModel = new MainWindowViewModel(
             conversionService,
             new FolderPicker(),
-            Dispatcher);
+            Dispatcher,
+            new CommandErrorHandler().Handle);
         var window = new MainWindow
         {
             DataContext = viewModel,
