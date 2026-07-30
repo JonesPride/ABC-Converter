@@ -28,6 +28,29 @@ public sealed class CbzArchiveSecurityTests
     }
 
     [Fact]
+    public async Task RejectsDuplicateNormalizedPagePaths()
+    {
+        string path = CreateArchive(
+            ("chapter\\page.png", FixtureArchive.ValidImage(".png", 10, 10), CompressionLevel.NoCompression),
+            ("chapter/page.png", FixtureArchive.ValidImage(".png", 10, 10), CompressionLevel.NoCompression));
+
+        try
+        {
+            var reader = new CbzArchiveReader();
+
+            InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(
+                () => reader.ReadAsync(path, CancellationToken.None));
+
+            Assert.Contains("duplicate", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("chapter/page.png", error.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public async Task RejectsOversizedUncompressedEntryBeforeImageDecoding()
     {
         string path = CreateArchive(
