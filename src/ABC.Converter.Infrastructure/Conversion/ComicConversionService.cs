@@ -1,6 +1,7 @@
 using ABC.Converter.Core.Archives;
 using ABC.Converter.Core.Epub;
 using ABC.Converter.Core.Files;
+using ABC.Converter.Core.Metadata;
 using ABC.Converter.Core.Models;
 
 namespace ABC.Converter.Infrastructure.Conversion;
@@ -15,6 +16,7 @@ public sealed class ComicConversionService
     private readonly IOutputPathPolicy outputPathPolicy;
     private readonly IFreeSpaceProvider freeSpaceProvider;
     private readonly ITemporaryFileCleaner temporaryFileCleaner;
+    private readonly IComicMetadataResolver metadataResolver;
     private readonly Action<string, Exception> onTemporaryCleanupFailure;
 
     public ComicConversionService(
@@ -24,7 +26,8 @@ public sealed class ComicConversionService
         IOutputPathPolicy outputPathPolicy,
         IFreeSpaceProvider? freeSpaceProvider = null,
         ITemporaryFileCleaner? temporaryFileCleaner = null,
-        Action<string, Exception>? onTemporaryCleanupFailure = null)
+        Action<string, Exception>? onTemporaryCleanupFailure = null,
+        IComicMetadataResolver? metadataResolver = null)
     {
         this.archiveReader = archiveReader;
         this.epubBuilder = epubBuilder;
@@ -35,6 +38,7 @@ public sealed class ComicConversionService
             temporaryFileCleaner ?? new FileSystemTemporaryFileCleaner();
         this.onTemporaryCleanupFailure =
             onTemporaryCleanupFailure ?? ReportTemporaryCleanupFailure;
+        this.metadataResolver = metadataResolver ?? PassthroughMetadataResolver.Instance;
     }
 
     public async Task<ConversionResult> ConvertAsync(
@@ -49,9 +53,14 @@ public sealed class ComicConversionService
         ComicSource source = await archiveReader.ReadAsync(
             sourceFullPath,
             cancellationToken);
-        string outputPath = outputPathPolicy.GetOutputPath(
-            request.OutputRoot,
+        ComicMetadata metadata = await metadataResolver.ResolveAsync(
+            sourceFullPath,
             request.Metadata,
+            cancellationToken);
+        ConversionRequest resolvedRequest = request with { Metadata = metadata };
+        string outputPath = outputPathPolicy.GetOutputPath(
+            resolvedRequest.OutputRoot,
+            resolvedRequest.Metadata,
             sourceFullPath);
         string outputDirectory = Path.GetDirectoryName(outputPath)!;
         Directory.CreateDirectory(outputDirectory);
@@ -64,8 +73,8 @@ public sealed class ComicConversionService
         {
             await epubBuilder.BuildAsync(
                 source,
-                request.Metadata,
-                request.Direction,
+                resolvedRequest.Metadata,
+                resolvedRequest.Direction,
                 tempPath,
                 cancellationToken);
             await validator.ValidateAsync(tempPath, cancellationToken);
@@ -83,7 +92,7 @@ public sealed class ComicConversionService
             outputPath = PublishWithoutOverwrite(
                 tempPath,
                 outputPath,
-                request,
+                resolvedRequest,
                 sourceFullPath);
             return new ConversionResult(
                 sourceFullPath,
@@ -194,4 +203,17 @@ public sealed class ComicConversionService
         }
     }
 
+    private sealed class PassthroughMetadataResolver : IComicMetadataResolver
+    {
+        public static PassthroughMetadataResolver Instance { get; } = new();
+
+        public Task<ComicMetadata> ResolveAsync(
+            string sourcePath,
+            ComicMetadata defaults,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(defaults);
+        }
+    }
 }
