@@ -209,6 +209,42 @@ public sealed class SeriesOutputPathPolicyTests
         Assert.False(File.Exists(alternate));
     }
 
+    [Fact]
+    public void UsesSourceIdentityAndAdvancesPastEveryExistingCandidate()
+    {
+        using var directory = new TemporaryDirectory();
+        var policy = new SeriesOutputPathPolicy();
+        var metadata = new ComicMetadata("Pilot", "Example Series", "2", "1");
+        string sourcePath = directory.Path + Path.DirectorySeparatorChar + "source-a.cbz";
+        string preferred = policy.GetOutputPath(directory.Path, metadata, sourcePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(preferred)!);
+        File.WriteAllBytes(preferred, [0x01]);
+
+        string alternate = policy.GetOutputPath(directory.Path, metadata, sourcePath);
+        File.WriteAllBytes(alternate, [0x02]);
+        string next = policy.GetOutputPath(directory.Path, metadata, sourcePath);
+
+        Assert.NotEqual(preferred, alternate);
+        Assert.NotEqual(alternate, next);
+        Assert.EndsWith(" (2).epub", next, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DistinguishesSourcesThatHaveIdenticalMetadata()
+    {
+        using var directory = new TemporaryDirectory();
+        var policy = new SeriesOutputPathPolicy();
+        var metadata = new ComicMetadata("Pilot", "Example Series", "2", "1");
+        string preferred = policy.GetOutputPath(directory.Path, metadata, "source-a.cbz");
+        Directory.CreateDirectory(Path.GetDirectoryName(preferred)!);
+        File.WriteAllBytes(preferred, [0x01]);
+
+        string first = policy.GetOutputPath(directory.Path, metadata, "source-a.cbz");
+        string second = policy.GetOutputPath(directory.Path, metadata, "source-b.cbz");
+
+        Assert.NotEqual(first, second);
+    }
+
     private static string[] RelativeComponents(string root, string path) =>
         Path.GetRelativePath(root, path)
             .Split(
