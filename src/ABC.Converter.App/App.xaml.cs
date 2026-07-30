@@ -5,6 +5,7 @@ using ABC.Converter.Epub;
 using ABC.Converter.Infrastructure.Archives;
 using ABC.Converter.Infrastructure.Conversion;
 using ABC.Converter.Infrastructure.Files;
+using ABC.Converter.Infrastructure.Metadata;
 
 namespace ABC.Converter.App;
 
@@ -22,7 +23,8 @@ public partial class App : Application
             archiveReader,
             epubBuilder,
             validator,
-            outputPathPolicy);
+            outputPathPolicy,
+            metadataResolver: new ComicInfoMetadataResolver());
         var viewModel = new MainWindowViewModel(
             conversionService,
             new FolderPicker(),
