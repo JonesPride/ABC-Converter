@@ -43,7 +43,8 @@ public sealed class ComicConversionService
             cancellationToken);
         string outputPath = outputPathPolicy.GetOutputPath(
             request.OutputRoot,
-            request.Metadata);
+            request.Metadata,
+            sourceFullPath);
         string outputDirectory = Path.GetDirectoryName(outputPath)!;
         Directory.CreateDirectory(outputDirectory);
         EnsureSufficientFreeSpace(outputDirectory, source, sourceLength);
@@ -71,12 +72,11 @@ public sealed class ComicConversionService
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (File.Exists(outputPath))
-            {
-                throw new IOException($"Output already exists: {outputPath}");
-            }
-
-            File.Move(tempPath, outputPath);
+            outputPath = PublishWithoutOverwrite(
+                tempPath,
+                outputPath,
+                request,
+                sourceFullPath);
             return new ConversionResult(
                 sourceFullPath,
                 outputPath,
@@ -117,4 +117,36 @@ public sealed class ComicConversionService
                 $"available: {availableBytes:N0} bytes.");
         }
     }
+
+    private string PublishWithoutOverwrite(
+        string tempPath,
+        string initialOutputPath,
+        ConversionRequest request,
+        string sourceFullPath)
+    {
+        string outputPath = initialOutputPath;
+        while (true)
+        {
+            try
+            {
+                File.Move(tempPath, outputPath);
+                return outputPath;
+            }
+            catch (IOException) when (File.Exists(outputPath))
+            {
+                string nextPath = outputPathPolicy.GetOutputPath(
+                    request.OutputRoot,
+                    request.Metadata,
+                    sourceFullPath);
+                if (string.Equals(nextPath, outputPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new IOException($"Output already exists: {outputPath}");
+                }
+
+                outputPath = nextPath;
+                Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+            }
+        }
+    }
+
 }
