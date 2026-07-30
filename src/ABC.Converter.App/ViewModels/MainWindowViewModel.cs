@@ -36,30 +36,43 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public MainWindowViewModel(
         ComicConversionService conversionService,
         FolderPicker? folderPicker = null,
-        Dispatcher? dispatcher = null)
+        Dispatcher? dispatcher = null,
+        Action<Exception>? commandExceptionHandler = null)
     {
         _conversionService = conversionService;
         _folderPicker = folderPicker ?? new FolderPicker();
         _dispatcher = dispatcher ?? Application.Current?.Dispatcher;
+        Action<Exception> onCommandException =
+            commandExceptionHandler ?? ReportCommandException;
         _outputRoot = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             "ABC Converter");
 
-        _addFilesCommand = new AsyncCommand(AddFilesFromPickerAsync);
-        _addFolderCommand = new AsyncCommand(AddFolderFromPickerAsync);
+        _addFilesCommand = new AsyncCommand(
+            AddFilesFromPickerAsync,
+            onException: onCommandException);
+        _addFolderCommand = new AsyncCommand(
+            AddFolderFromPickerAsync,
+            onException: onCommandException);
         _startCommand = new AsyncCommand(
             () => StartAsync(CancellationToken.None),
-            CanStart);
+            CanStart,
+            onCommandException);
         _cancelSelectedCommand = new AsyncCommand(
             CancelSelectedAsync,
-            CanCancelSelected);
-        _browseOutputCommand = new AsyncCommand(BrowseOutputAsync);
+            CanCancelSelected,
+            onCommandException);
+        _browseOutputCommand = new AsyncCommand(
+            BrowseOutputAsync,
+            onException: onCommandException);
         _retrySelectedCommand = new AsyncCommand(
             RetrySelectedAsync,
-            CanRetrySelected);
+            CanRetrySelected,
+            onCommandException);
         _retryAllFailedCommand = new AsyncCommand(
             RetryAllFailedAsync,
-            () => Jobs.Any(job => job.Status == "Failed"));
+            () => Jobs.Any(job => job.Status == "Failed"),
+            onCommandException);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -511,6 +524,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
 
         return _dispatcher.InvokeAsync(action).Task;
+    }
+
+    private static void ReportCommandException(Exception exception)
+    {
+        System.Diagnostics.Trace.TraceError(
+            "Unhandled command failure: {0}",
+            exception);
     }
 
     private bool SetField<T>(

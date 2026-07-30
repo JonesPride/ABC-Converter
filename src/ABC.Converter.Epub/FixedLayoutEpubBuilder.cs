@@ -33,6 +33,10 @@ public sealed class FixedLayoutEpubBuilder(
 
         try
         {
+            await using IComicArchiveSession archiveSession =
+                await archiveReader.OpenSessionAsync(
+                    source.SourcePath,
+                    cancellationToken);
             using FileStream file = File.Create(destinationPath);
             using var zip = new ZipArchive(
                 file,
@@ -62,8 +66,7 @@ public sealed class FixedLayoutEpubBuilder(
                     CompressionLevel.NoCompression);
                 await using (Stream imageOut = imageEntry.Open())
                 {
-                    await archiveReader.ExtractPageAsync(
-                        source.SourcePath,
+                    await archiveSession.ExtractPageAsync(
                         page,
                         imageOut,
                         cancellationToken);

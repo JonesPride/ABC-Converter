@@ -5,12 +5,38 @@ using ABC.Converter.Core.Models;
 
 namespace ABC.Converter.Infrastructure.Conversion;
 
-public sealed class ComicConversionService(
-    IComicArchiveReader archiveReader,
-    IEpubBuilder epubBuilder,
-    IEpubValidator validator,
-    IOutputPathPolicy outputPathPolicy)
+public sealed class ComicConversionService
 {
+    private const long MinimumWorkingSpaceBytes = 64L * 1024 * 1024;
+
+    private readonly IComicArchiveReader archiveReader;
+    private readonly IEpubBuilder epubBuilder;
+    private readonly IEpubValidator validator;
+    private readonly IOutputPathPolicy outputPathPolicy;
+    private readonly IFreeSpaceProvider freeSpaceProvider;
+    private readonly ITemporaryFileCleaner temporaryFileCleaner;
+    private readonly Action<string, Exception> onTemporaryCleanupFailure;
+
+    public ComicConversionService(
+        IComicArchiveReader archiveReader,
+        IEpubBuilder epubBuilder,
+        IEpubValidator validator,
+        IOutputPathPolicy outputPathPolicy,
+        IFreeSpaceProvider? freeSpaceProvider = null,
+        ITemporaryFileCleaner? temporaryFileCleaner = null,
+        Action<string, Exception>? onTemporaryCleanupFailure = null)
+    {
+        this.archiveReader = archiveReader;
+        this.epubBuilder = epubBuilder;
+        this.validator = validator;
+        this.outputPathPolicy = outputPathPolicy;
+        this.freeSpaceProvider = freeSpaceProvider ?? new DriveFreeSpaceProvider();
+        this.temporaryFileCleaner =
+            temporaryFileCleaner ?? new FileSystemTemporaryFileCleaner();
+        this.onTemporaryCleanupFailure =
+            onTemporaryCleanupFailure ?? ReportTemporaryCleanupFailure;
+    }
+
     public async Task<ConversionResult> ConvertAsync(
         ConversionRequest request,
         CancellationToken cancellationToken)
@@ -25,9 +51,11 @@ public sealed class ComicConversionService(
             cancellationToken);
         string outputPath = outputPathPolicy.GetOutputPath(
             request.OutputRoot,
-            request.Metadata);
+            request.Metadata,
+            sourceFullPath);
         string outputDirectory = Path.GetDirectoryName(outputPath)!;
         Directory.CreateDirectory(outputDirectory);
+        EnsureSufficientFreeSpace(outputDirectory, source, sourceLength);
 
         string tempPath = Path.Combine(
             outputDirectory,
@@ -52,12 +80,11 @@ public sealed class ComicConversionService(
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (File.Exists(outputPath))
-            {
-                throw new IOException($"Output already exists: {outputPath}");
-            }
-
-            File.Move(tempPath, outputPath);
+            outputPath = PublishWithoutOverwrite(
+                tempPath,
+                outputPath,
+                request,
+                sourceFullPath);
             return new ConversionResult(
                 sourceFullPath,
                 outputPath,
@@ -65,10 +92,106 @@ public sealed class ComicConversionService(
         }
         finally
         {
-            if (File.Exists(tempPath))
+            TryDeleteTemporaryFile(tempPath);
+        }
+    }
+
+    private void TryDeleteTemporaryFile(string tempPath)
+    {
+        if (!File.Exists(tempPath))
+        {
+            return;
+        }
+
+        try
+        {
+            temporaryFileCleaner.Delete(tempPath);
+        }
+        catch (Exception exception) when (
+            exception is IOException or
+            UnauthorizedAccessException or
+            NotSupportedException)
+        {
+            try
             {
-                File.Delete(tempPath);
+                onTemporaryCleanupFailure(tempPath, exception);
+            }
+            catch (Exception reportingException)
+            {
+                System.Diagnostics.Trace.TraceError(
+                    "Failed to report leftover temporary file '{0}': {1}",
+                    tempPath,
+                    reportingException);
             }
         }
     }
+
+    private static void ReportTemporaryCleanupFailure(
+        string tempPath,
+        Exception exception)
+    {
+        System.Diagnostics.Trace.TraceWarning(
+            "Could not delete temporary file '{0}'. It was left for later cleanup. {1}",
+            tempPath,
+            exception);
+    }
+
+    private void EnsureSufficientFreeSpace(
+        string outputDirectory,
+        ComicSource source,
+        long sourceLength)
+    {
+        long estimatedPayload = Math.Max(source.TotalUncompressedBytes, sourceLength);
+        long proportionalReserve = estimatedPayload / 20;
+        long workingReserve = Math.Max(MinimumWorkingSpaceBytes, proportionalReserve);
+        long requiredBytes;
+        try
+        {
+            requiredBytes = checked(estimatedPayload + workingReserve);
+        }
+        catch (OverflowException exception)
+        {
+            throw new IOException("The estimated output size is too large.", exception);
+        }
+
+        long availableBytes = freeSpaceProvider.GetAvailableBytes(outputDirectory);
+        if (availableBytes < requiredBytes)
+        {
+            throw new IOException(
+                $"Insufficient free space for conversion. Required: {requiredBytes:N0} bytes; " +
+                $"available: {availableBytes:N0} bytes.");
+        }
+    }
+
+    private string PublishWithoutOverwrite(
+        string tempPath,
+        string initialOutputPath,
+        ConversionRequest request,
+        string sourceFullPath)
+    {
+        string outputPath = initialOutputPath;
+        while (true)
+        {
+            try
+            {
+                File.Move(tempPath, outputPath);
+                return outputPath;
+            }
+            catch (IOException) when (File.Exists(outputPath))
+            {
+                string nextPath = outputPathPolicy.GetOutputPath(
+                    request.OutputRoot,
+                    request.Metadata,
+                    sourceFullPath);
+                if (string.Equals(nextPath, outputPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new IOException($"Output already exists: {outputPath}");
+                }
+
+                outputPath = nextPath;
+                Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+            }
+        }
+    }
+
 }
