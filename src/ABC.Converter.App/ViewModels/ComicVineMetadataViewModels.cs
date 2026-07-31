@@ -53,18 +53,19 @@ public sealed class ComicVineSettingsViewModel : INotifyPropertyChanged
         return Task.CompletedTask;
     }
 
-    private void SetField<T>(
+    private bool SetField<T>(
         ref T field,
         T value,
         [CallerMemberName] string? propertyName = null)
     {
         if (EqualityComparer<T>.Default.Equals(field, value))
         {
-            return;
+            return false;
         }
 
         field = value;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        return true;
     }
 }
 
@@ -174,17 +175,18 @@ public sealed class MetadataReviewViewModel : INotifyPropertyChanged
     private static string? NullIfWhiteSpace(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private void SetField<T>(
+    private bool SetField<T>(
         ref T field,
         T value,
         [CallerMemberName] string? propertyName = null)
     {
         if (EqualityComparer<T>.Default.Equals(field, value))
         {
-            return;
+            return false;
         }
 
         field = value;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        return true;
     }
 }
