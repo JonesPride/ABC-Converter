@@ -46,6 +46,7 @@ internal sealed class TemporaryQueueDatabase : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await Store.DisposeAsync();
+        SqliteConnection.ClearAllPools();
         if (Directory.Exists(directoryPath))
         {
             Directory.Delete(directoryPath, recursive: true);
