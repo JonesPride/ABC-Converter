@@ -76,6 +76,7 @@ public sealed class MetadataReviewViewModel : INotifyPropertyChanged
     private string? volume;
     private int? publicationYear;
     private string language;
+    private ComicVineIssue? selectedCandidate;
 
     public MetadataReviewViewModel(
         ComicMetadata offlineMetadata,
@@ -95,6 +96,18 @@ public sealed class MetadataReviewViewModel : INotifyPropertyChanged
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public IReadOnlyList<ComicVineIssue> Candidates { get; }
+
+    public ComicVineIssue? SelectedCandidate
+    {
+        get => selectedCandidate;
+        set
+        {
+            if (SetField(ref selectedCandidate, value) && value is not null)
+            {
+                ApplyCandidate(value);
+            }
+        }
+    }
 
     public string Title
     {
