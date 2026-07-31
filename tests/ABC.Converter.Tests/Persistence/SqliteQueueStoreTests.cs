@@ -153,6 +153,34 @@ public sealed class SqliteQueueStoreTests
     }
 
     [Fact]
+    public async Task IgnoresUnicodePathDuplicatesUsingOrdinalIgnoreCase()
+    {
+        await using var database = new TemporaryQueueDatabase();
+        await database.Store.InitializeAsync(CancellationToken.None);
+        QueueJobRecord first = QueueJobFactory.BasicRecord(
+            Guid.Parse("15e933ee-6595-4620-9517-ab902f311b80"),
+            @"C:\Comics\Édition.cbz",
+            "v1:300:400");
+        QueueJobRecord duplicate = QueueJobFactory.BasicRecord(
+            Guid.Parse("cc7a17e6-d14c-463c-af09-b6e6a590086e"),
+            @"c:\comics\édition.cbz",
+            "v1:300:400");
+        Assert.True(string.Equals(
+            first.SourcePath,
+            duplicate.SourcePath,
+            StringComparison.OrdinalIgnoreCase));
+
+        IReadOnlyList<Guid> inserted = await database.Store.AddJobsAsync(
+            [first, duplicate],
+            CancellationToken.None);
+
+        Assert.Equal([first.Id], inserted);
+        QueueJobRecord loaded = Assert.Single(
+            await database.Store.LoadJobsAsync(CancellationToken.None));
+        Assert.Equal(first.Id, loaded.Id);
+    }
+
+    [Fact]
     public async Task AcceptsTheSamePathWhenItsFingerprintChanges()
     {
         await using var database = new TemporaryQueueDatabase();
@@ -234,6 +262,30 @@ public sealed class SqliteQueueStoreTests
             await database.Store.LoadSettingAsync("output-root", CancellationToken.None));
     }
 
+    [Fact]
+    public async Task LoadsMixedOffsetCreatedUtcValuesInChronologicalOrder()
+    {
+        await using var database = new TemporaryQueueDatabase();
+        await database.Store.InitializeAsync(CancellationToken.None);
+        QueueJobRecord earlier = QueueJobFactory.BasicRecord(
+            Guid.Parse("00000000-0000-0000-0000-000000000101"),
+            @"C:\Comics\earlier.cbz",
+            "v1:101:101",
+            new DateTimeOffset(2026, 7, 31, 10, 0, 0, TimeSpan.FromHours(2)));
+        QueueJobRecord later = QueueJobFactory.BasicRecord(
+            Guid.Parse("00000000-0000-0000-0000-000000000102"),
+            @"C:\Comics\later.cbz",
+            "v1:102:102",
+            new DateTimeOffset(2026, 7, 31, 9, 0, 0, TimeSpan.Zero));
+        Assert.True(earlier.CreatedUtc < later.CreatedUtc);
+        await database.Store.AddJobsAsync([later, earlier], CancellationToken.None);
+
+        IReadOnlyList<QueueJobRecord> loaded =
+            await database.Store.LoadJobsAsync(CancellationToken.None);
+
+        Assert.Equal([earlier.Id, later.Id], loaded.Select(job => job.Id));
+    }
+
     [Fact(Timeout = 10_000)]
     public async Task InsertsAndLoadsTenThousandJobsInCreatedUtcThenIdOrder()
     {
@@ -310,6 +362,47 @@ public sealed class SqliteQueueStoreTests
         await using var database = await CreateDatabaseWithOneJobAsync();
         await database.ExecuteNonQueryAsync(
             "UPDATE queue_jobs SET metadata_review_json = '{not-json';");
+
+        await AssertInvalidDatabaseAsync(database);
+    }
+
+    [Fact]
+    public async Task LoadingRejectsCreatedUtcWithoutCanonicalOffset()
+    {
+        await using var database = await CreateDatabaseWithOneJobAsync();
+        await database.ExecuteNonQueryAsync(
+            "UPDATE queue_jobs SET created_utc = '2026-07-31T10:15:30';");
+
+        await AssertInvalidDatabaseAsync(database);
+    }
+
+    [Fact]
+    public async Task LoadingRejectsEmptyApprovedMetadataJsonObject()
+    {
+        await using var database = await CreateDatabaseWithOneJobAsync();
+        await database.ExecuteNonQueryAsync(
+            "UPDATE queue_jobs SET approved_metadata_json = '{}';");
+
+        await AssertInvalidDatabaseAsync(database);
+    }
+
+    [Fact]
+    public async Task LoadingRejectsEmptyMetadataReviewJsonObject()
+    {
+        await using var database = await CreateDatabaseWithOneJobAsync();
+        await database.ExecuteNonQueryAsync(
+            "UPDATE queue_jobs SET metadata_review_json = '{}';");
+
+        await AssertInvalidDatabaseAsync(database);
+    }
+
+    [Fact]
+    public async Task LoadingRejectsIncompleteNestedMetadataReviewGraph()
+    {
+        await using var database = await CreateDatabaseWithOneJobAsync();
+        await database.ExecuteNonQueryAsync(
+            "UPDATE queue_jobs SET metadata_review_json = " +
+            "'{\"OfflineMetadata\":{},\"Candidates\":[{}]}';");
 
         await AssertInvalidDatabaseAsync(database);
     }
