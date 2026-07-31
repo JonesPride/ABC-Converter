@@ -96,10 +96,60 @@
       <StackPanel Grid.Column="1"
                   Orientation="Horizontal"
                   VerticalAlignment="Center">
-        <Button Content="Settings"
-                Style="{StaticResource StandardButtonStyle}"
-                IsEnabled="False"
-                ToolTip="Settings arrive in the persistent queue update." />
+        <ToggleButton x:Name="SettingsToggle"
+                      Content="Settings"
+                      Style="{StaticResource StandardButtonStyle}" />
+        <Popup IsOpen="{Binding IsChecked, ElementName=SettingsToggle}"
+               PlacementTarget="{Binding ElementName=SettingsToggle}"
+               Placement="Bottom"
+               StaysOpen="False"
+               AllowsTransparency="True">
+          <Border DataContext="{Binding ComicVineSettings}"
+                  Width="390"
+                  Margin="0,8,0,0"
+                  Padding="18"
+                  Background="White"
+                  BorderBrush="#FFD9E2E9"
+                  BorderThickness="1"
+                  CornerRadius="8">
+            <StackPanel>
+              <TextBlock Text="ComicVine metadata"
+                         FontSize="16"
+                         FontWeight="SemiBold"
+                         Foreground="#FF15384A" />
+              <TextBlock Margin="0,5,0,12"
+                         Text="Optional. Your key is stored in Windows Credential Manager."
+                         TextWrapping="Wrap"
+                         Foreground="#FF5C7180" />
+              <PasswordBox x:Name="ComicVineApiKeyBox"
+                           MinHeight="34"
+                           Padding="8,5"
+                           PasswordChanged="OnComicVineApiKeyChanged" />
+              <TextBlock Margin="0,8,0,10"
+                         Foreground="#FF405866">
+                <TextBlock.Style>
+                  <Style TargetType="TextBlock">
+                    <Setter Property="Text" Value="No API key saved" />
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding IsConfigured}" Value="True">
+                        <Setter Property="Text" Value="API key saved securely" />
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </TextBlock.Style>
+              </TextBlock>
+              <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Remove"
+                        Command="{Binding DataContext.DeleteComicVineSettingsCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                        Style="{StaticResource StandardButtonStyle}" />
+                <Button Content="Save Key"
+                        Command="{Binding DataContext.SaveComicVineSettingsCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                        Click="OnComicVineSaveClicked"
+                        Style="{StaticResource PrimaryButtonStyle}" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+        </Popup>
         <Button Content="Help"
                 Style="{StaticResource StandardButtonStyle}"
                 IsEnabled="False"
@@ -332,6 +382,7 @@
               <RowDefinition Height="Auto" />
               <RowDefinition Height="Auto" />
               <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
             <TextBlock Text="Source"
                        Margin="0,0,14,6"
@@ -374,6 +425,53 @@
                        Text="{Binding ErrorMessage}"
                        Foreground="#FFB42318"
                        TextWrapping="Wrap" />
+            <Border Grid.Row="5"
+                    Grid.ColumnSpan="2"
+                    Margin="0,12,0,0"
+                    Padding="12"
+                    Background="#FFFFF8E7"
+                    BorderBrush="#FFE9B949"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    DataContext="{Binding MetadataReview}">
+              <Border.Style>
+                <Style TargetType="Border">
+                  <Setter Property="Visibility" Value="Visible" />
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding}" Value="{x:Null}">
+                      <Setter Property="Visibility" Value="Collapsed" />
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </Border.Style>
+              <StackPanel>
+                <TextBlock Text="ComicVine needs your review"
+                           FontWeight="SemiBold"
+                           Foreground="#FF6B4F00" />
+                <ComboBox Margin="0,8,0,8"
+                          ItemsSource="{Binding Candidates}"
+                          SelectedItem="{Binding SelectedCandidate}"
+                          DisplayMemberPath="Name" />
+                <UniformGrid Columns="2">
+                  <TextBox Margin="0,0,6,6"
+                           Text="{Binding Title, UpdateSourceTrigger=PropertyChanged}"
+                           ToolTip="Title" />
+                  <TextBox Margin="6,0,0,6"
+                           Text="{Binding Series, UpdateSourceTrigger=PropertyChanged}"
+                           ToolTip="Series" />
+                  <TextBox Margin="0,0,6,6"
+                           Text="{Binding IssueNumber, UpdateSourceTrigger=PropertyChanged}"
+                           ToolTip="Issue number" />
+                  <TextBox Margin="6,0,0,6"
+                           Text="{Binding PublicationYear, UpdateSourceTrigger=PropertyChanged}"
+                           ToolTip="Publication year" />
+                </UniformGrid>
+                <Button Content="Approve Metadata &amp; Queue"
+                        HorizontalAlignment="Right"
+                        Command="{Binding DataContext.ApproveMetadataCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                        Style="{StaticResource PrimaryButtonStyle}" />
+              </StackPanel>
+            </Border>
           </Grid>
         </Border>
       </Expander>
