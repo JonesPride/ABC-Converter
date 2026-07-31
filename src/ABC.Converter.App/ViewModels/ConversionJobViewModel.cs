@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using ABC.Converter.Core.Models;
 
 namespace ABC.Converter.App.ViewModels;
 
@@ -11,6 +12,8 @@ public sealed class ConversionJobViewModel : INotifyPropertyChanged
     private int _progress;
     private string? _errorMessage;
     private string? _outputPath;
+    private ComicMetadata? _approvedMetadata;
+    private MetadataReviewViewModel? _metadataReview;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -48,6 +51,18 @@ public sealed class ConversionJobViewModel : INotifyPropertyChanged
     {
         get => _outputPath;
         set => SetField(ref _outputPath, value);
+    }
+
+    public ComicMetadata? ApprovedMetadata
+    {
+        get => _approvedMetadata;
+        set => SetField(ref _approvedMetadata, value);
+    }
+
+    public MetadataReviewViewModel? MetadataReview
+    {
+        get => _metadataReview;
+        set => SetField(ref _metadataReview, value);
     }
 
     private void SetField<T>(

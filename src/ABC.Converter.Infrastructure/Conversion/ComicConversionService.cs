@@ -53,10 +53,12 @@ public sealed class ComicConversionService
         ComicSource source = await archiveReader.ReadAsync(
             sourceFullPath,
             cancellationToken);
-        ComicMetadata metadata = await metadataResolver.ResolveAsync(
-            sourceFullPath,
-            request.Metadata,
-            cancellationToken);
+        ComicMetadata metadata = request.MetadataIsApproved
+            ? request.Metadata
+            : await metadataResolver.ResolveAsync(
+                sourceFullPath,
+                request.Metadata,
+                cancellationToken);
         ConversionRequest resolvedRequest = request with { Metadata = metadata };
         string outputPath = outputPathPolicy.GetOutputPath(
             resolvedRequest.OutputRoot,

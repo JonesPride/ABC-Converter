@@ -4,4 +4,5 @@ public sealed record ConversionRequest(
     string SourcePath,
     string OutputRoot,
     ComicMetadata Metadata,
-    ReadingDirection Direction = ReadingDirection.LeftToRight);
+    ReadingDirection Direction = ReadingDirection.LeftToRight,
+    bool MetadataIsApproved = false);
