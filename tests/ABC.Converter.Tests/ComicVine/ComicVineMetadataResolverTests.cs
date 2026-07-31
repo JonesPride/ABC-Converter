@@ -11,7 +11,7 @@ public sealed class ComicVineMetadataResolverTests
     [Fact]
     public async Task UniqueMatchEnrichesOfflineMetadata()
     {
-        var offline = new ComicMetadata("Fallback title", "Batman", "1", publicationYear: 2016);
+        var offline = new ComicMetadata("Fallback title", "Batman", "1", PublicationYear: 2016);
         var resolver = new ComicVineMetadataResolver(
             new FixedResolver(offline),
             new FixedLookup([
@@ -48,7 +48,7 @@ public sealed class ComicVineMetadataResolverTests
     [Fact]
     public async Task AmbiguousMatchRequiresReviewInsteadOfGuessing()
     {
-        var offline = new ComicMetadata("Batman 1", "Batman", "1", publicationYear: 2016);
+        var offline = new ComicMetadata("Batman 1", "Batman", "1", PublicationYear: 2016);
         ComicVineIssue[] candidates =
         [
             new(101, "Batman", "1", "Batman", 2016),
