@@ -2,6 +2,7 @@ using ABC.Converter.Core.Models;
 using ABC.Converter.Core.Queue;
 using ABC.Converter.Infrastructure.Persistence;
 using Microsoft.Data.Sqlite;
+using Xunit;
 
 namespace ABC.Converter.Tests.Persistence;
 
