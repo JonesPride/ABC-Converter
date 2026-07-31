@@ -51,7 +51,7 @@ public sealed class MetadataReviewViewModelTests
     [Fact]
     public void CandidateCanPopulateEditableMetadataAndBuildAnApprovedResult()
     {
-        var offline = new ComicMetadata("Batman 1", "Batman", "1", publicationYear: 2016);
+        var offline = new ComicMetadata("Batman 1", "Batman", "1", PublicationYear: 2016);
         var candidate = new ComicVineIssue(
             101,
             "I Am Gotham, Part One",
