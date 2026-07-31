@@ -407,6 +407,35 @@ public sealed class SqliteQueueStoreTests
     }
 
     [Fact]
+    public async Task LoadingRejectsMetadataReviewCandidateWithoutExternalId()
+    {
+        await using var database = await CreateDatabaseWithOneJobAsync();
+        await database.ExecuteNonQueryAsync(
+            """
+            UPDATE queue_jobs
+            SET metadata_review_json = '{
+                "OfflineMetadata": {
+                    "Title": "Offline title",
+                    "Series": "Offline series",
+                    "IssueNumber": "1",
+                    "Volume": "2",
+                    "PublicationYear": 2026,
+                    "Language": "en"
+                },
+                "Candidates": [{
+                    "Provider": "Comic Vine",
+                    "Name": "Candidate title",
+                    "IssueNumber": "1",
+                    "Series": "Candidate series",
+                    "StartYear": 2026
+                }]
+            }';
+            """);
+
+        await AssertInvalidDatabaseAsync(database);
+    }
+
+    [Fact]
     public async Task LoadingRejectsAnInvalidRequiredColumn()
     {
         await using var database = await CreateDatabaseWithOneJobAsync();
