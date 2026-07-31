@@ -9,6 +9,7 @@ using ABC.Converter.App.Commands;
 using ABC.Converter.App.Services;
 using ABC.Converter.Core.Models;
 using ABC.Converter.Infrastructure.Conversion;
+using ABC.Converter.Infrastructure.Metadata;
 
 namespace ABC.Converter.App.ViewModels;
 
@@ -27,6 +28,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private readonly AsyncCommand _browseOutputCommand;
     private readonly AsyncCommand _retrySelectedCommand;
     private readonly AsyncCommand _retryAllFailedCommand;
+    private readonly AsyncCommand _saveComicVineSettingsCommand;
+    private readonly AsyncCommand _deleteComicVineSettingsCommand;
+    private readonly AsyncCommand _approveMetadataCommand;
     private string _outputRoot;
     private ConversionJobViewModel? _selectedJob;
     private ConversionJobViewModel? _activeJob;
@@ -37,11 +41,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         ComicConversionService conversionService,
         FolderPicker? folderPicker = null,
         Dispatcher? dispatcher = null,
-        Action<Exception>? commandExceptionHandler = null)
+        Action<Exception>? commandExceptionHandler = null,
+        ComicVineSettingsViewModel? comicVineSettings = null)
     {
         _conversionService = conversionService;
         _folderPicker = folderPicker ?? new FolderPicker();
         _dispatcher = dispatcher ?? Application.Current?.Dispatcher;
+        ComicVineSettings = comicVineSettings;
         Action<Exception> onCommandException =
             commandExceptionHandler ?? ReportCommandException;
         _outputRoot = Path.Combine(
@@ -73,11 +79,34 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             RetryAllFailedAsync,
             () => Jobs.Any(job => job.Status == "Failed"),
             onCommandException);
+        _saveComicVineSettingsCommand = new AsyncCommand(
+            SaveComicVineSettingsAsync,
+            () => ComicVineSettings is not null &&
+                !string.IsNullOrWhiteSpace(ComicVineSettings.ApiKey),
+            onCommandException);
+        _deleteComicVineSettingsCommand = new AsyncCommand(
+            DeleteComicVineSettingsAsync,
+            () => ComicVineSettings?.IsConfigured == true,
+            onCommandException);
+        _approveMetadataCommand = new AsyncCommand(
+            ApproveMetadataAsync,
+            () => SelectedJob?.MetadataReview is not null,
+            onCommandException);
+        if (ComicVineSettings is not null)
+        {
+            ComicVineSettings.PropertyChanged += (_, _) =>
+            {
+                _saveComicVineSettingsCommand.RaiseCanExecuteChanged();
+                _deleteComicVineSettingsCommand.RaiseCanExecuteChanged();
+            };
+        }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public ObservableCollection<ConversionJobViewModel> Jobs { get; } = [];
+
+    public ComicVineSettingsViewModel? ComicVineSettings { get; }
 
     public string OutputRoot
     {
@@ -100,6 +129,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             {
                 _cancelSelectedCommand.RaiseCanExecuteChanged();
                 _retrySelectedCommand.RaiseCanExecuteChanged();
+                _approveMetadataCommand.RaiseCanExecuteChanged();
             }
         }
     }
@@ -134,6 +164,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public ICommand RetrySelectedCommand => _retrySelectedCommand;
 
     public ICommand RetryAllFailedCommand => _retryAllFailedCommand;
+
+    public ICommand SaveComicVineSettingsCommand => _saveComicVineSettingsCommand;
+
+    public ICommand DeleteComicVineSettingsCommand => _deleteComicVineSettingsCommand;
+
+    public ICommand ApproveMetadataCommand => _approveMetadataCommand;
 
     public async Task AddPathsAsync(IEnumerable<string> paths)
     {
@@ -218,10 +254,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
                     string title = Path.GetFileNameWithoutExtension(
                         job.SourcePath);
+                    ComicMetadata requestedMetadata =
+                        job.ApprovedMetadata ??
+                        new ComicMetadata(title, job.Series);
                     var request = new ConversionRequest(
                         job.SourcePath,
                         outputRoot,
-                        new ComicMetadata(title, job.Series));
+                        requestedMetadata,
+                        MetadataIsApproved: job.ApprovedMetadata is not null);
                     ConversionResult result = await Task.Run(
                         () => _conversionService.ConvertAsync(
                             request,
@@ -233,6 +273,20 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                         job.OutputPath = result.OutputPath;
                         job.Progress = 100;
                         job.Status = "Completed";
+                    });
+                }
+                catch (MetadataReviewRequiredException exception)
+                {
+                    await RunOnDispatcherAsync(() =>
+                    {
+                        job.MetadataReview = new MetadataReviewViewModel(
+                            exception.OfflineMetadata,
+                            exception.Candidates);
+                        job.Status = "Needs Review";
+                        job.Progress = 0;
+                        job.ErrorMessage = null;
+                        job.OutputPath = null;
+                        SelectedJob = job;
                     });
                 }
                 catch (OperationCanceledException)
@@ -418,6 +472,30 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         return Task.CompletedTask;
     }
 
+    private Task SaveComicVineSettingsAsync() =>
+        ComicVineSettings?.SaveAsync() ?? Task.CompletedTask;
+
+    private Task DeleteComicVineSettingsAsync() =>
+        ComicVineSettings?.DeleteAsync() ?? Task.CompletedTask;
+
+    private Task ApproveMetadataAsync()
+    {
+        ConversionJobViewModel? job = SelectedJob;
+        if (job?.MetadataReview is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        job.ApprovedMetadata = job.MetadataReview.BuildMetadata();
+        job.MetadataReview = null;
+        job.Status = "Queued";
+        job.Progress = 0;
+        job.ErrorMessage = null;
+        _approveMetadataCommand.RaiseCanExecuteChanged();
+        RaiseQueueStateChanged();
+        return Task.CompletedTask;
+    }
+
     private Task RetrySelectedAsync()
     {
         if (SelectedJob is not null)
@@ -444,6 +522,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         job.Progress = 0;
         job.ErrorMessage = null;
         job.OutputPath = null;
+        job.MetadataReview = null;
+        job.ApprovedMetadata = null;
         job.Status = "Queued";
     }
 
@@ -513,6 +593,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         _cancelSelectedCommand.RaiseCanExecuteChanged();
         _retrySelectedCommand.RaiseCanExecuteChanged();
         _retryAllFailedCommand.RaiseCanExecuteChanged();
+        _approveMetadataCommand.RaiseCanExecuteChanged();
     }
 
     private Task RunOnDispatcherAsync(Action action)
