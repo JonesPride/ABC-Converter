@@ -9,11 +9,12 @@ namespace ABC.Converter.Infrastructure.Persistence;
 public sealed class SqliteQueueStore(string databasePath) : IQueueStore
 {
     private const int CurrentSchemaVersion = 1;
+    private const string SourcePathCollation = "ABC_ORDINAL_IGNORE_CASE";
 
     private const string SchemaVersionOneSql = """
         CREATE TABLE IF NOT EXISTS queue_jobs (
             id TEXT PRIMARY KEY NOT NULL,
-            source_path TEXT NOT NULL COLLATE NOCASE,
+            source_path TEXT NOT NULL COLLATE ABC_ORDINAL_IGNORE_CASE,
             source_fingerprint TEXT NOT NULL,
             output_root TEXT NOT NULL,
             requested_title TEXT NOT NULL,
@@ -341,6 +342,9 @@ public sealed class SqliteQueueStore(string databasePath) : IQueueStore
         try
         {
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            connection.CreateCollation(
+                SourcePathCollation,
+                static (left, right) => StringComparer.OrdinalIgnoreCase.Compare(left, right));
             using SqliteCommand command = connection.CreateCommand();
             command.CommandText = """
                 PRAGMA busy_timeout = 5000;
@@ -492,10 +496,10 @@ public sealed class SqliteQueueStore(string databasePath) : IQueueStore
             progress,
             ReadTimestamp(reader, 12, "queue_jobs.created_utc"),
             ReadTimestamp(reader, 13, "queue_jobs.updated_utc"),
-            Deserialize<ComicMetadata>(
+            DeserializeMetadata(
                 ReadOptionalString(reader, 14, "queue_jobs.approved_metadata_json"),
                 "queue_jobs.approved_metadata_json"),
-            Deserialize<QueueMetadataReview>(
+            DeserializeReview(
                 ReadOptionalString(reader, 15, "queue_jobs.metadata_review_json"),
                 "queue_jobs.metadata_review_json"),
             ReadOptionalString(reader, 16, "queue_jobs.output_path"),
@@ -553,16 +557,67 @@ public sealed class SqliteQueueStore(string databasePath) : IQueueStore
         string columnName)
     {
         string value = ReadRequiredString(reader, ordinal, columnName);
-        if (!DateTimeOffset.TryParse(
+        if (!DateTimeOffset.TryParseExact(
                 value,
+                "O",
                 CultureInfo.InvariantCulture,
-                DateTimeStyles.RoundtripKind,
-                out DateTimeOffset timestamp))
+                DateTimeStyles.None,
+                out DateTimeOffset timestamp) ||
+            !string.Equals(value, FormatTimestamp(timestamp), StringComparison.Ordinal))
         {
             throw InvalidColumn(columnName);
         }
 
-        return timestamp;
+        return timestamp.ToUniversalTime();
+    }
+
+    private ComicMetadata? DeserializeMetadata(string? json, string columnName)
+    {
+        ComicMetadata? metadata = Deserialize<ComicMetadata>(json, columnName);
+        if (metadata is not null)
+        {
+            ValidateMetadata(metadata, columnName);
+        }
+
+        return metadata;
+    }
+
+    private QueueMetadataReview? DeserializeReview(string? json, string columnName)
+    {
+        QueueMetadataReview? review = Deserialize<QueueMetadataReview>(json, columnName);
+        if (review is null)
+        {
+            return null;
+        }
+
+        if (review.OfflineMetadata is null || review.Candidates is null)
+        {
+            throw InvalidColumn(columnName);
+        }
+
+        ValidateMetadata(review.OfflineMetadata, columnName);
+        foreach (QueueMetadataCandidate? candidate in review.Candidates)
+        {
+            if (candidate is null ||
+                candidate.Provider is null ||
+                candidate.Name is null ||
+                candidate.Series is null)
+            {
+                throw InvalidColumn(columnName);
+            }
+        }
+
+        return review;
+    }
+
+    private void ValidateMetadata(ComicMetadata metadata, string columnName)
+    {
+        if (metadata.Title is null ||
+            metadata.Series is null ||
+            metadata.Language is null)
+        {
+            throw InvalidColumn(columnName);
+        }
     }
 
     private T? Deserialize<T>(string? json, string columnName)
@@ -594,7 +649,7 @@ public sealed class SqliteQueueStore(string databasePath) : IQueueStore
         : JsonSerializer.Serialize(value, JsonOptions);
 
     private static string FormatTimestamp(DateTimeOffset value) =>
-        value.ToString("O", CultureInfo.InvariantCulture);
+        value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
 
     private static object DbValue(object? value) => value ?? DBNull.Value;
 
