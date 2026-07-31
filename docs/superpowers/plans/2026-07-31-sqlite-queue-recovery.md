@@ -6,7 +6,7 @@
 
 **Architecture:** Core defines provider-neutral queue records, states, recovery rules, and storage interfaces. Infrastructure implements a versioned SQLite database and low-cost source identity fingerprinting. The WPF ViewModel writes every meaningful transition through the queue store and restores the queue before the main window is shown.
 
-**Tech Stack:** C# 12, .NET 8, WPF, `Microsoft.Data.Sqlite` 8.0.20, xUnit, PowerShell, Windows GitHub Actions.
+**Tech Stack:** C# 12, .NET 8, WPF, `Microsoft.Data.Sqlite` 8.0.20 with the non-vulnerable `SQLitePCLRaw.bundle_e_sqlite3` 2.1.11 security floor, xUnit, PowerShell, Windows GitHub Actions.
 
 ## Global Constraints
 
@@ -221,6 +221,7 @@ Add to `ABC.Converter.Infrastructure.csproj`:
 
 ```xml
 <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.20" />
+<PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.11" />
 ```
 
 - [ ] **Step 4: Implement schema version 1 in one migration transaction**
