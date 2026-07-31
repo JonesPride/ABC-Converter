@@ -584,6 +584,11 @@ public sealed class SqliteQueueStore(string databasePath) : IQueueStore
 
     private QueueMetadataReview? DeserializeReview(string? json, string columnName)
     {
+        if (json is not null)
+        {
+            ValidateCandidateIdentifiers(json, columnName);
+        }
+
         QueueMetadataReview? review = Deserialize<QueueMetadataReview>(json, columnName);
         if (review is null)
         {
@@ -608,6 +613,36 @@ public sealed class SqliteQueueStore(string databasePath) : IQueueStore
         }
 
         return review;
+    }
+
+    private void ValidateCandidateIdentifiers(string json, string columnName)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object ||
+                !root.TryGetProperty("Candidates", out JsonElement candidates) ||
+                candidates.ValueKind != JsonValueKind.Array)
+            {
+                throw InvalidColumn(columnName);
+            }
+
+            foreach (JsonElement candidate in candidates.EnumerateArray())
+            {
+                if (candidate.ValueKind != JsonValueKind.Object ||
+                    !candidate.TryGetProperty("ExternalId", out JsonElement externalId) ||
+                    externalId.ValueKind != JsonValueKind.Number ||
+                    !externalId.TryGetInt64(out _))
+                {
+                    throw InvalidColumn(columnName);
+                }
+            }
+        }
+        catch (JsonException exception)
+        {
+            throw InvalidColumn(columnName, exception);
+        }
     }
 
     private void ValidateMetadata(ComicMetadata metadata, string columnName)

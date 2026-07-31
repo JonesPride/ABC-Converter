@@ -231,7 +231,7 @@ Use one connection per operation with `Mode=ReadWriteCreate;Cache=Shared`, `PRAG
 ```sql
 CREATE TABLE IF NOT EXISTS queue_jobs (
     id TEXT PRIMARY KEY NOT NULL,
-    source_path TEXT NOT NULL COLLATE NOCASE,
+    source_path TEXT NOT NULL COLLATE ABC_ORDINAL_IGNORE_CASE,
     source_fingerprint TEXT NOT NULL,
     output_root TEXT NOT NULL,
     requested_title TEXT NOT NULL,
