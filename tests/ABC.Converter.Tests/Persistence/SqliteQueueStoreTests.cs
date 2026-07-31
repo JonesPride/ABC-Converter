@@ -165,10 +165,9 @@ public sealed class SqliteQueueStoreTests
             Guid.Parse("cc7a17e6-d14c-463c-af09-b6e6a590086e"),
             @"c:\comics\édition.cbz",
             "v1:300:400");
-        Assert.True(string.Equals(
-            first.SourcePath,
-            duplicate.SourcePath,
-            StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(
+            0,
+            StringComparer.OrdinalIgnoreCase.Compare(first.SourcePath, duplicate.SourcePath));
 
         IReadOnlyList<Guid> inserted = await database.Store.AddJobsAsync(
             [first, duplicate],
