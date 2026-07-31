@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using ABC.Converter.App.ViewModels;
 
 namespace ABC.Converter.App;
@@ -45,6 +46,32 @@ public partial class MainWindow : Window
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
+    }
+
+    private void OnComicVineApiKeyChanged(
+        object sender,
+        RoutedEventArgs eventArgs)
+    {
+        if (DataContext is MainWindowViewModel viewModel &&
+            viewModel.ComicVineSettings is not null &&
+            sender is PasswordBox passwordBox)
+        {
+            viewModel.ComicVineSettings.ApiKey = passwordBox.Password;
+        }
+    }
+
+    private void OnComicVineSaveClicked(
+        object sender,
+        RoutedEventArgs eventArgs)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (DataContext is MainWindowViewModel viewModel &&
+                viewModel.ComicVineSettings?.IsConfigured == true)
+            {
+                ComicVineApiKeyBox.Clear();
+            }
+        });
     }
 
     private static bool TryGetDroppedPaths(
