@@ -6,6 +6,6 @@
     <ProjectReference Include="..\ABC.Converter.Core\ABC.Converter.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.2.0" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="4.1.2" />
   </ItemGroup>
 </Project>
