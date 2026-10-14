@@ -109,3 +109,9 @@ workers, pause/resume, recovery, and durable logs belong to the next plan.
 ComicInfo.xml metadata, ComicVine matching, result caching, and metadata
 review also belong to later plans. The current converter derives its basic
 title and series values from the source filename.
+
+## License
+
+ABC Converter's original code is licensed under the [MIT License](LICENSE).
+Third-party dependencies, including SixLabors.ImageSharp, retain their own
+licenses and usage requirements; the project's MIT license does not replace them.
