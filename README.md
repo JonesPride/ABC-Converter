@@ -114,21 +114,17 @@ API key. The desktop interface includes ComicVine settings and metadata review.
 Queue and reviewed-metadata persistence remain unfinished; draft PR #11 is
 test-first work in progress, not a completed recovery implementation.
 
-## Current build blocker
+## Image handling
 
-The current ImageSharp 3.2.0 dependency is flagged by NuGet security advisories,
-so restore fails with warnings treated as errors. Do not disable the audit or
-suppress those errors to get a green build. Dependency PR #23 upgrades to 4.1.2
-and clears restore, but its build fails because no Six Labors license is supplied.
+The converter uses SkiaSharp to identify JPEG, PNG, and WebP page dimensions.
+Its native Windows libraries are supplied by the SkiaSharp NuGet dependencies;
+no Six Labors license key is required. ImageSharp has been removed.
 
-To unblock development, either provision a valid license for the upgraded
-dependency and configure local/CI builds according to Six Labors documentation,
-or replace the image identification dependency and validate JPG, PNG, and WebP
-dimension handling. Do not commit license keys to the repository. A dependency
-upgrade alone is not yet a verified build fix.
+Windows CI verifies restore, the dependency audit, the Release build, and both
+test projects. A manual Windows launch and conversion check is still deferred.
 
 ## License
 
 ABC Converter's original code is licensed under the [MIT License](LICENSE).
-Third-party dependencies, including SixLabors.ImageSharp, retain their own
+Third-party dependencies, including SkiaSharp and its native Skia libraries, retain their own
 licenses and usage requirements; the project's MIT license does not replace them.
