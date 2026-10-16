@@ -8,6 +8,8 @@ using System.Windows.Threading;
 using ABC.Converter.App.Commands;
 using ABC.Converter.App.Services;
 using ABC.Converter.Core.Models;
+using ABC.Converter.Core.Queue;
+using ABC.Converter.Infrastructure.Persistence;
 using ABC.Converter.Infrastructure.Conversion;
 using ABC.Converter.Infrastructure.Metadata;
 
@@ -36,20 +38,49 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private ConversionJobViewModel? _activeJob;
     private CancellationTokenSource? _activeJobCancellation;
     private int _isProcessing;
+    private readonly IQueueStore? _queueStore;
+    private readonly ISourceFingerprintProvider _fingerprints;
+    private readonly Func<DateTimeOffset> _utcNow;
+    private readonly SemaphoreSlim _addGate = new(1, 1);
+    private readonly CancellationTokenSource _shutdown = new();
+    private readonly object _processingLock = new();
+    private Task? _processingTask;
+    private bool _stopping;
+    private bool _persistenceFailed;
+    private int _initializationStarted;
+    private bool _ready;
+    private int _pendingMutations;
+    private TaskCompletionSource _mutationsDrained = CompletedSignal();
+    private Task _settingsWrite = Task.CompletedTask;
+    private readonly Action<Exception> _commandError;
+
+    private static TaskCompletionSource CompletedSignal()
+    {
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        signal.SetResult();
+        return signal;
+    }
 
     public MainWindowViewModel(
         ComicConversionService conversionService,
         FolderPicker? folderPicker = null,
         Dispatcher? dispatcher = null,
         Action<Exception>? commandExceptionHandler = null,
-        ComicVineSettingsViewModel? comicVineSettings = null)
+        ComicVineSettingsViewModel? comicVineSettings = null,
+        IQueueStore? queueStore = null,
+        ISourceFingerprintProvider? fingerprintProvider = null,
+        Func<DateTimeOffset>? utcNow = null)
     {
+        _queueStore = queueStore;
+        _fingerprints = fingerprintProvider ?? new SourceFingerprintProvider();
+        _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _conversionService = conversionService;
         _folderPicker = folderPicker ?? new FolderPicker();
         _dispatcher = dispatcher ?? Application.Current?.Dispatcher;
         ComicVineSettings = comicVineSettings;
         Action<Exception> onCommandException =
             commandExceptionHandler ?? ReportCommandException;
+        _commandError = onCommandException;
         _outputRoot = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             "ABC Converter");
@@ -77,7 +108,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             onCommandException);
         _retryAllFailedCommand = new AsyncCommand(
             RetryAllFailedAsync,
-            () => Jobs.Any(job => job.Status == "Failed"),
+            () => !_stopping && !_persistenceFailed && Volatile.Read(ref _isProcessing) == 0 && Jobs.Any(job => job.Status == "Failed"),
             onCommandException);
         _saveComicVineSettingsCommand = new AsyncCommand(
             SaveComicVineSettingsAsync,
@@ -90,7 +121,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             onCommandException);
         _approveMetadataCommand = new AsyncCommand(
             ApproveMetadataAsync,
-            () => SelectedJob?.MetadataReview is not null,
+            () => !_stopping && !_persistenceFailed && Volatile.Read(ref _isProcessing) == 0 && SelectedJob?.MetadataReview is not null,
             onCommandException);
         if (ComicVineSettings is not null)
         {
@@ -113,8 +144,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         get => _outputRoot;
         set
         {
+            if (_stopping) return;
             if (SetField(ref _outputRoot, value))
             {
+                if (_ready && _queueStore is not null)
+                    _settingsWrite = SaveOutputSettingAsync(_settingsWrite, value);
                 _startCommand.RaiseCanExecuteChanged();
             }
         }
@@ -171,40 +205,173 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public ICommand ApproveMetadataCommand => _approveMetadataCommand;
 
+    public async Task InitializeAsync(CancellationToken cancellationToken)
+    {
+        if (Interlocked.Exchange(ref _initializationStarted, 1) != 0)
+            throw new InvalidOperationException("The queue has already been initialized.");
+        if (_queueStore is null) return;
+        await _queueStore.InitializeAsync(cancellationToken);
+        string? outputRoot = await _queueStore.LoadSettingAsync("OutputRoot", cancellationToken);
+        var records = await _queueStore.LoadJobsAsync(cancellationToken);
+        var recovered = new List<QueueJobRecord>();
+        foreach (var record in records.OrderBy(j => j.CreatedUtc).ThenBy(j => j.Id))
+        {
+            var job = QueueRecoveryPolicy.Recover(record, path => PublishedOutputIdentity.Matches(record, path), _utcNow());
+            if (!ReferenceEquals(record, job)) await _queueStore.SaveJobAsync(job, cancellationToken);
+            recovered.Add(job);
+        }
+        await RunOnDispatcherAsync(() =>
+        {
+            if (outputRoot is not null) OutputRoot = outputRoot;
+            foreach (var record in recovered)
+            {
+                var job = ConversionJobViewModel.FromRecord(record);
+                job.PropertyChanged += OnJobPropertyChanged;
+                Jobs.Add(job);
+                _knownSourcePaths.Add(Identity(record.SourcePath, record.SourceFingerprint));
+            }
+            RaiseQueueStateChanged();
+        });
+        _ready = true;
+        _settingsWrite = SaveOutputSettingAsync(_settingsWrite, OutputRoot);
+        await _settingsWrite;
+    }
+
+    private async Task SaveOutputSettingAsync(Task previous, string value)
+    {
+        try
+        {
+            await previous;
+            await _queueStore!.SaveSettingAsync("OutputRoot", value, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            _persistenceFailed = true;
+            _commandError(exception);
+            throw;
+        }
+        finally { await RunOnDispatcherAsync(RaiseQueueStateChanged); }
+    }
+
+    private async Task ChangeJobAsync(ConversionJobViewModel job, Action change)
+    {
+        lock (_processingLock)
+        {
+            if (_stopping || _persistenceFailed || Volatile.Read(ref _isProcessing) != 0)
+                throw new InvalidOperationException("Wait for queue processing and saving to finish before editing a job.");
+            if (_pendingMutations++ == 0)
+                _mutationsDrained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        try
+        {
+            await RunOnDispatcherAsync(change);
+            await PersistJobAsync(job);
+        }
+        finally
+        {
+            lock (_processingLock)
+                if (--_pendingMutations == 0) _mutationsDrained.TrySetResult();
+            await RunOnDispatcherAsync(RaiseQueueStateChanged);
+        }
+    }
+
+    private static string Identity(string path, string fingerprint) => path + "\0" + fingerprint;
+
+    private async Task PersistJobAsync(ConversionJobViewModel job, QueueJobState? durableState = null, string? outputPath = null, string? outputHash = null)
+    {
+        if (_queueStore is null) return;
+        QueueJobRecord? record = null;
+        await RunOnDispatcherAsync(() => record = job.ToRecord(OutputRoot, _utcNow()));
+        if (durableState is { } state) record = record! with { State = state, OutputPath = outputPath, Progress = 100,
+            ErrorStage = "Publishing", TechnicalError = "sha256:" + outputHash };
+        try { await _queueStore.SaveJobAsync(record!, CancellationToken.None); }
+        catch { _persistenceFailed = true; throw; }
+    }
+
     public async Task AddPathsAsync(IEnumerable<string> paths)
     {
         ArgumentNullException.ThrowIfNull(paths);
-
-        string[] requestedPaths = paths
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .ToArray();
-        string[] discoveredPaths = await Task.Run(
-            () => DiscoverComicPaths(requestedPaths));
-
-        await RunOnDispatcherAsync(() =>
+        await _addGate.WaitAsync();
+        try
         {
+            if (_stopping || _persistenceFailed) throw new InvalidOperationException("The queue is not accepting new work.");
+            await _settingsWrite;
+            string[] requestedPaths = paths.Where(path => !string.IsNullOrWhiteSpace(path)).ToArray();
+            string[] discoveredPaths = await Task.Run(() => DiscoverComicPaths(requestedPaths));
+            var jobs = new List<ConversionJobViewModel>();
             foreach (string path in discoveredPaths)
             {
-                if (!_knownSourcePaths.Add(path))
-                {
-                    continue;
-                }
-
+                string fingerprint = await Task.Run(() => _fingerprints.GetFingerprintAsync(path, _shutdown.Token), _shutdown.Token);
+                if (_knownSourcePaths.Contains(Identity(path, fingerprint))) continue;
                 string title = Path.GetFileNameWithoutExtension(path);
-                var job = new ConversionJobViewModel
-                {
-                    SourcePath = path,
-                    Series = title,
-                };
-                job.PropertyChanged += OnJobPropertyChanged;
-                Jobs.Add(job);
+                jobs.Add(new ConversionJobViewModel { SourcePath = path, Series = title,
+                    JobOutputRoot = OutputRoot, SourceFingerprint = fingerprint, CreatedUtc = _utcNow(), UpdatedUtc = _utcNow() });
             }
-
-            RaiseQueueStateChanged();
-        });
+            IReadOnlyList<Guid> inserted = _queueStore is null ? jobs.Select(j => j.Id).ToArray() :
+                await _queueStore.AddJobsAsync(jobs.Select(j => j.ToRecord(OutputRoot, _utcNow())).ToArray(), _shutdown.Token);
+            var ids = inserted.ToHashSet();
+            await RunOnDispatcherAsync(() =>
+            {
+                foreach (var job in jobs.Where(j => ids.Contains(j.Id)))
+                {
+                    if (!_knownSourcePaths.Add(Identity(job.SourcePath, job.SourceFingerprint))) continue;
+                    job.PropertyChanged += OnJobPropertyChanged;
+                    Jobs.Add(job);
+                }
+                RaiseQueueStateChanged();
+            });
+        }
+        finally { _addGate.Release(); }
     }
 
-    public async Task StartAsync(CancellationToken cancellationToken)
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        lock (_processingLock)
+        {
+            if (_stopping || _persistenceFailed) return Task.CompletedTask;
+            if (_processingTask is { IsCompleted: false }) return _processingTask;
+            if (_pendingMutations != 0 || !_settingsWrite.IsCompletedSuccessfully) return Task.CompletedTask;
+            return _processingTask = ProcessQueueAsync(cancellationToken);
+        }
+    }
+
+    public async Task PrepareForShutdownAsync(TimeSpan timeout)
+    {
+        Task? processing;
+        Task mutations;
+        Task settings;
+        lock (_processingLock)
+        {
+            _stopping = true;
+            processing = _processingTask;
+            mutations = _mutationsDrained.Task;
+            settings = _settingsWrite;
+        }
+        string outputRoot = OutputRoot;
+        _shutdown.Cancel();
+        using var deadline = new CancellationTokenSource(timeout);
+        // Run even synchronous SQLite work off the dispatcher, and bound the whole operation.
+        Task finishing = Task.Run(async () =>
+        {
+            await Task.WhenAll(processing ?? Task.CompletedTask, mutations, settings);
+            await _addGate.WaitAsync(deadline.Token);
+            try
+            {
+                if (_queueStore is not null)
+                    await _queueStore.SaveSettingAsync("OutputRoot", outputRoot, deadline.Token);
+            }
+            finally { _addGate.Release(); }
+        });
+        try { await finishing.WaitAsync(timeout); }
+        catch (TimeoutException)
+        {
+            _ = finishing.ContinueWith(task => { _ = task.Exception; },
+                CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+    }
+
+    private async Task ProcessQueueAsync(CancellationToken cancellationToken)
     {
         if (Interlocked.CompareExchange(ref _isProcessing, 1, 0) != 0)
         {
@@ -226,9 +393,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
             foreach (ConversionJobViewModel job in queuedJobs)
             {
+                if (_stopping || _persistenceFailed) break;
                 using var jobCancellation =
                     CancellationTokenSource.CreateLinkedTokenSource(
-                        cancellationToken);
+                        cancellationToken, _shutdown.Token);
                 SetActiveJob(job, jobCancellation);
 
                 try
@@ -252,20 +420,30 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                         continue;
                     }
 
+                    job.JobOutputRoot ??= outputRoot;
+                    await PersistJobAsync(job);
+                    if (_queueStore is not null && await _fingerprints.GetFingerprintAsync(job.SourcePath, jobCancellation.Token) != job.SourceFingerprint)
+                        throw new IOException("The source CBZ changed after it was queued. Add the changed file as a new job.");
                     string title = Path.GetFileNameWithoutExtension(
                         job.SourcePath);
                     ComicMetadata requestedMetadata =
                         job.ApprovedMetadata ??
-                        new ComicMetadata(title, job.Series);
+                        job.RequestedMetadata ?? new ComicMetadata(title, job.Series);
                     var request = new ConversionRequest(
                         job.SourcePath,
-                        outputRoot,
+                        job.JobOutputRoot,
                         requestedMetadata,
                         MetadataIsApproved: job.ApprovedMetadata is not null);
                     ConversionResult result = await Task.Run(
                         () => _conversionService.ConvertAsync(
                             request,
-                            jobCancellation.Token),
+                            jobCancellation.Token,
+                            _queueStore is null ? null : async (state, progress) =>
+                            {
+                                await RunOnDispatcherAsync(() => { job.Status = ConversionJobViewModel.DisplayState(state); job.Progress = progress; });
+                                await PersistJobAsync(job);
+                            },
+                            _queueStore is null ? null : (path, hash) => PersistJobAsync(job, QueueJobState.Completed, path, hash)),
                         jobCancellation.Token);
 
                     await RunOnDispatcherAsync(() =>
@@ -274,6 +452,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                         job.Progress = 100;
                         job.Status = "Completed";
                     });
+                    await PersistJobAsync(job);
                 }
                 catch (MetadataReviewRequiredException exception)
                 {
@@ -288,26 +467,33 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                         job.OutputPath = null;
                         SelectedJob = job;
                     });
+                    await PersistJobAsync(job);
                 }
                 catch (OperationCanceledException)
                 {
                     await RunOnDispatcherAsync(() =>
                     {
-                        job.Status = "Cancelled";
+                        job.Status = _stopping ? "Queued" : "Cancelled";
                         job.Progress = 0;
                         job.ErrorMessage = null;
                         job.OutputPath = null;
                     });
+                    await PersistJobAsync(job);
                 }
                 catch (Exception exception)
                 {
+                    if (_persistenceFailed) throw;
                     await RunOnDispatcherAsync(() =>
                     {
+                        job.ErrorStage = job.Status;
+                        job.TechnicalError = SafeExceptionDetails.Format(exception);
+                        job.Retryable = true;
                         job.Status = "Failed";
                         job.Progress = 0;
-                        job.ErrorMessage = exception.Message;
+                        job.ErrorMessage = SafeExceptionDetails.Redact(exception.Message);
                         job.OutputPath = null;
                     });
+                    await PersistJobAsync(job);
                 }
                 finally
                 {
@@ -440,12 +626,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         return Task.CompletedTask;
     }
 
-    private Task CancelSelectedAsync()
+    private async Task CancelSelectedAsync()
     {
         ConversionJobViewModel? selectedJob = SelectedJob;
         if (selectedJob is null)
         {
-            return Task.CompletedTask;
+            return;
         }
 
         CancellationTokenSource? cancellation = null;
@@ -460,16 +646,17 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         if (cancellation is not null)
         {
             cancellation.Cancel();
-            return Task.CompletedTask;
+            return;
         }
 
         if (selectedJob.Status == "Queued")
         {
             selectedJob.Status = "Cancelled";
             selectedJob.Progress = 0;
+            await PersistJobAsync(selectedJob);
         }
 
-        return Task.CompletedTask;
+        return;
     }
 
     private Task SaveComicVineSettingsAsync() =>
@@ -478,70 +665,60 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private Task DeleteComicVineSettingsAsync() =>
         ComicVineSettings?.DeleteAsync() ?? Task.CompletedTask;
 
-    private Task ApproveMetadataAsync()
+    private async Task ApproveMetadataAsync()
     {
-        ConversionJobViewModel? job = SelectedJob;
-        if (job?.MetadataReview is null)
-        {
-            return Task.CompletedTask;
-        }
-
-        job.ApprovedMetadata = job.MetadataReview.BuildMetadata();
-        job.MetadataReview = null;
-        job.Status = "Queued";
-        job.Progress = 0;
-        job.ErrorMessage = null;
-        _approveMetadataCommand.RaiseCanExecuteChanged();
+        var job = SelectedJob;
+        if (job?.MetadataReview is null) return;
+        ComicMetadata approved = job.MetadataReview.BuildMetadata();
+        await ChangeJobAsync(job, () => { job.ApprovedMetadata = approved; ResetForRetry(job, incrementRetry: false); });
         RaiseQueueStateChanged();
-        return Task.CompletedTask;
     }
 
-    private Task RetrySelectedAsync()
+    private async Task RetrySelectedAsync()
     {
-        if (SelectedJob is not null)
+        if (SelectedJob is { } job)
         {
-            ResetForRetry(SelectedJob);
+            await ChangeJobAsync(job, () => ResetForRetry(job));
         }
-
-        return Task.CompletedTask;
     }
 
-    private Task RetryAllFailedAsync()
+    private async Task RetryAllFailedAsync()
     {
-        foreach (ConversionJobViewModel job in Jobs.Where(
-                     job => job.Status == "Failed"))
+        foreach (var job in Jobs.Where(j => j.Status == "Failed").ToArray())
         {
-            ResetForRetry(job);
+            await ChangeJobAsync(job, () => ResetForRetry(job));
         }
-
-        return Task.CompletedTask;
     }
 
-    private static void ResetForRetry(ConversionJobViewModel job)
+    private static void ResetForRetry(ConversionJobViewModel job, bool incrementRetry = true)
     {
+        if (incrementRetry) job.RetryCount++;
         job.Progress = 0;
         job.ErrorMessage = null;
         job.OutputPath = null;
         job.MetadataReview = null;
-        job.ApprovedMetadata = null;
+        job.PersistedCandidates = null;
+        job.ErrorStage = null;
+        job.TechnicalError = null;
+        job.Retryable = false;
         job.Status = "Queued";
     }
 
     private bool CanStart()
     {
-        return Volatile.Read(ref _isProcessing) == 0 &&
+        return !_stopping && !_persistenceFailed && _pendingMutations == 0 && _settingsWrite.IsCompletedSuccessfully && Volatile.Read(ref _isProcessing) == 0 &&
             !string.IsNullOrWhiteSpace(OutputRoot) &&
             Jobs.Any(job => job.Status == "Queued");
     }
 
     private bool CanCancelSelected()
     {
-        return SelectedJob?.Status is "Queued" or "Scanning";
+        return SelectedJob is { } selected && (selected.Status == "Queued" || ReferenceEquals(selected, _activeJob));
     }
 
     private bool CanRetrySelected()
     {
-        return SelectedJob?.Status == "Failed";
+        return !_stopping && !_persistenceFailed && Volatile.Read(ref _isProcessing) == 0 && SelectedJob?.Status == "Failed";
     }
 
     private void SetActiveJob(
@@ -611,7 +788,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         System.Diagnostics.Trace.TraceError(
             "Unhandled command failure: {0}",
-            exception);
+            SafeExceptionDetails.Format(exception));
     }
 
     private bool SetField<T>(

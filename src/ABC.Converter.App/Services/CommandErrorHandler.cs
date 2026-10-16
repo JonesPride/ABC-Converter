@@ -9,7 +9,7 @@ public sealed class CommandErrorHandler
     {
         ArgumentNullException.ThrowIfNull(exception);
 
-        Trace.TraceError("Unhandled command failure: {0}", exception);
+        Trace.TraceError("Unhandled command failure: {0}", SafeExceptionDetails.Format(exception));
         MessageBox.Show(
             "ABC Converter could not complete that action. " +
             "Please check the application log for details.",

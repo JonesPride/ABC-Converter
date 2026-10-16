@@ -3,6 +3,8 @@ using ABC.Converter.Core.Epub;
 using ABC.Converter.Core.Files;
 using ABC.Converter.Core.Metadata;
 using ABC.Converter.Core.Models;
+using ABC.Converter.Core.Queue;
+using System.Security.Cryptography;
 
 namespace ABC.Converter.Infrastructure.Conversion;
 
@@ -43,7 +45,9 @@ public sealed class ComicConversionService
 
     public async Task<ConversionResult> ConvertAsync(
         ConversionRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<QueueJobState, int, Task>? checkpoint = null,
+        Func<string, string, Task>? beforePublication = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -53,6 +57,7 @@ public sealed class ComicConversionService
         ComicSource source = await archiveReader.ReadAsync(
             sourceFullPath,
             cancellationToken);
+        if (checkpoint is not null) await checkpoint(QueueJobState.FetchingMetadata, 15);
         ComicMetadata metadata = request.MetadataIsApproved
             ? request.Metadata
             : await metadataResolver.ResolveAsync(
@@ -73,12 +78,14 @@ public sealed class ComicConversionService
             $".{Path.GetFileName(outputPath)}.{Guid.NewGuid():N}.tmp");
         try
         {
+            if (checkpoint is not null) await checkpoint(QueueJobState.BuildingEpub, 35);
             await epubBuilder.BuildAsync(
                 source,
                 resolvedRequest.Metadata,
                 resolvedRequest.Direction,
                 tempPath,
                 cancellationToken);
+            if (checkpoint is not null) await checkpoint(QueueJobState.Validating, 85);
             await validator.ValidateAsync(tempPath, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -91,11 +98,14 @@ public sealed class ComicConversionService
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            outputPath = PublishWithoutOverwrite(
+            if (checkpoint is not null) await checkpoint(QueueJobState.Publishing, 95);
+            outputPath = await PublishWithoutOverwriteAsync(
                 tempPath,
                 outputPath,
                 resolvedRequest,
-                sourceFullPath);
+                sourceFullPath,
+                beforePublication,
+                cancellationToken);
             return new ConversionResult(
                 sourceFullPath,
                 outputPath,
@@ -174,34 +184,41 @@ public sealed class ComicConversionService
         }
     }
 
-    private string PublishWithoutOverwrite(
+    private async Task<string> PublishWithoutOverwriteAsync(
         string tempPath,
         string initialOutputPath,
         ConversionRequest request,
-        string sourceFullPath)
+        string sourceFullPath,
+        Func<string, string, Task>? beforePublication,
+        CancellationToken cancellationToken)
     {
         string outputPath = initialOutputPath;
+        string outputHash = string.Empty;
+        if (beforePublication is not null)
+        {
+            await using Stream validated = File.OpenRead(tempPath);
+            outputHash = Convert.ToHexString(await SHA256.HashDataAsync(validated, cancellationToken));
+        }
         while (true)
         {
-            try
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!File.Exists(outputPath))
             {
-                File.Move(tempPath, outputPath);
-                return outputPath;
-            }
-            catch (IOException) when (File.Exists(outputPath))
-            {
-                string nextPath = outputPathPolicy.GetOutputPath(
-                    request.OutputRoot,
-                    request.Metadata,
-                    sourceFullPath);
-                if (string.Equals(nextPath, outputPath, StringComparison.OrdinalIgnoreCase))
+                // A failed durable write must escape; only File.Move collisions are retried.
+                if (beforePublication is not null) await beforePublication(outputPath, outputHash);
+                cancellationToken.ThrowIfCancellationRequested();
+                try
                 {
-                    throw new IOException($"Output already exists: {outputPath}");
+                    File.Move(tempPath, outputPath);
+                    return outputPath;
                 }
-
-                outputPath = nextPath;
-                Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+                catch (IOException) when (File.Exists(outputPath)) { }
             }
+            string nextPath = outputPathPolicy.GetOutputPath(request.OutputRoot, request.Metadata, sourceFullPath);
+            if (string.Equals(nextPath, outputPath, StringComparison.OrdinalIgnoreCase))
+                throw new IOException($"Output already exists: {outputPath}");
+            outputPath = nextPath;
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         }
     }
 
