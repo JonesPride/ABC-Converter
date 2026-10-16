@@ -5,7 +5,31 @@ for Apple Books. This repository contains the foundation Windows desktop
 slice: add CBZ files or folders, choose an output location, run the queue, and
 inspect each job's result.
 
-## Requirements
+## Portable Windows build
+
+Windows CI produces an `ABC-Converter-win-x64` artifact containing a ZIP and
+SHA-256 checksum. Download it from a successful run in the repository's
+**Actions** tab, unpack the artifact, then extract the application ZIP completely
+and launch `ABC.Converter.App.exe`. The app includes .NET; no SDK installation is
+needed. These are unsigned preview builds retained for 14 days. Manual Windows
+launch testing remains deferred.
+
+To create the same package from source on Windows:
+
+```powershell
+.\scripts\Package.ps1
+# Optional package verification, using PowerShell 7 x64:
+.\scripts\Test-Package.ps1
+```
+
+The ZIP is written to `artifacts\ABC-Converter-win-x64.zip`. It includes the
+application, .NET runtime, native dependencies, usage notes, and third-party
+package license metadata and bundled notices. Extract a newer build into a new
+folder while the app is closed. Queue data remains in Local AppData, so replacing
+the extracted app does not reset it. An installer and automatic updates are
+future work.
+
+## Developer requirements
 
 - Windows 10 version 22H2 or Windows 11 on an x64 PC
 - .NET 8 SDK for x64
