@@ -39,7 +39,9 @@ administrator if PowerShell still blocks the scripts.
 `Setup.ps1` checks for .NET 8 and restores NuGet packages. `Build.ps1` builds
 the solution with warnings treated as errors. `Test.ps1` uses the existing
 build, so run `Build.ps1` first. Test results are written to
-`TestResults\abc-converter.trx`.
+`TestResults\` using generated filenames so reports from the two test projects
+do not overwrite each other. Windows CI retains the TRX files as a
+`windows-test-results` artifact when tests produce reports.
 
 The build and test scripts use `Debug` when you omit `-Configuration`.
 `Run.ps1` starts the WPF application from
@@ -106,9 +108,24 @@ This slice keeps the queue in memory and processes jobs in sequence. Closing
 the app discards unfinished queue state. Queue persistence, concurrent
 workers, pause/resume, recovery, and durable logs belong to the next plan.
 
-ComicInfo.xml metadata, ComicVine matching, result caching, and metadata
-review also belong to later plans. The current converter derives its basic
-title and series values from the source filename.
+The metadata pipeline starts with filename-derived defaults, reads root-level
+`ComicInfo.xml`, and optionally looks up ComicVine metadata using a user-supplied
+API key. The desktop interface includes ComicVine settings and metadata review.
+Queue and reviewed-metadata persistence remain unfinished; draft PR #11 is
+test-first work in progress, not a completed recovery implementation.
+
+## Current build blocker
+
+The current ImageSharp 3.2.0 dependency is flagged by NuGet security advisories,
+so restore fails with warnings treated as errors. Do not disable the audit or
+suppress those errors to get a green build. Dependency PR #23 upgrades to 4.1.2
+and clears restore, but its build fails because no Six Labors license is supplied.
+
+To unblock development, either provision a valid license for the upgraded
+dependency and configure local/CI builds according to Six Labors documentation,
+or replace the image identification dependency and validate JPG, PNG, and WebP
+dimension handling. Do not commit license keys to the repository. A dependency
+upgrade alone is not yet a verified build fix.
 
 ## License
 
