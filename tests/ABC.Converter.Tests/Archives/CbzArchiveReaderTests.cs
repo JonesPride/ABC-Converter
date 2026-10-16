@@ -269,6 +269,27 @@ public sealed class CbzArchiveReaderTests
         }
     }
 
+    // Encoded independently with Pillow; these do not depend on the reader's codec.
+    [Theory]
+    [InlineData("jpg", "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAALAAcDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDzKiiivUPLP//Z")]
+    [InlineData("png", "iVBORw0KGgoAAAANSUhEUgAAAAcAAAALCAIAAAA88gD/AAAAFElEQVR4nGMUsYliwABMmELDRhQAqnIAwOG6lhIAAAAASUVORK5CYII=")]
+    [InlineData("webp", "UklGRjQAAABXRUJQVlA4ICgAAACQAQCdASoHAAsAAUAmJYgCdLoAA5gA/vjqf+j64RZGX+N8QXtSYAAA")]
+    public async Task ReadsIndependentNonSquareImageDimensions(string extension, string base64)
+    {
+        string path = FixtureArchive.CreateCbz(("page1." + extension, Convert.FromBase64String(base64)));
+        try
+        {
+            var source = await new CbzArchiveReader().ReadAsync(path, CancellationToken.None);
+            var page = Assert.Single(source.Pages);
+            Assert.Equal(7, page.Width);
+            Assert.Equal(11, page.Height);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     private static void AssertPage(
         string archivePath,
         string mediaType,

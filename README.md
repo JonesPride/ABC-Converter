@@ -113,5 +113,5 @@ title and series values from the source filename.
 ## License
 
 ABC Converter's original code is licensed under the [MIT License](LICENSE).
-Third-party dependencies, including SixLabors.ImageSharp, retain their own
+Third-party dependencies, including SkiaSharp and its native Skia libraries, retain their own
 licenses and usage requirements; the project's MIT license does not replace them.
