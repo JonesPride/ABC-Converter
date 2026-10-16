@@ -23,7 +23,11 @@ try {
     }
     foreach ($framework in $assets.project.frameworks.PSObject.Properties) {
         foreach ($dependency in $framework.Value.downloadDependencies) {
-            $version = $dependency.version.Trim('[', ']', ' ')
+            $bounds = $dependency.version.Trim('[', ']', ' ').Split(',')
+            $version = $bounds[0].Trim()
+            if ($bounds.Count -gt 1 -and $version -ne $bounds[1].Trim()) {
+                throw "Expected an exact runtime-pack version: $($dependency.version)"
+            }
             $packages[("$($dependency.name)/$version").ToLowerInvariant()] = $true
         }
     }
