@@ -37,7 +37,7 @@ public sealed class QueueRecoveryAcceptanceTests
                 new ConversionRequest(files.Source, files.Output, recovered.ApprovedMetadata!, MetadataIsApproved: true),
                 CancellationToken.None,
                 async (state, progress) => await reopened.SaveJobAsync(recovered with { State = state, Progress = progress }, CancellationToken.None),
-                async path => await reopened.SaveJobAsync(recovered with { State = QueueJobState.Completed, Progress = 100, OutputPath = path }, CancellationToken.None));
+                async (path, hash) => await reopened.SaveJobAsync(recovered with { State = QueueJobState.Completed, Progress = 100, OutputPath = path, ErrorStage = "Publishing", TechnicalError = "sha256:" + hash }, CancellationToken.None));
             Assert.True(File.Exists(result.OutputPath));
         }
         // Simulates a crash after the atomic rename but before the caller acknowledges completion.
@@ -45,7 +45,7 @@ public sealed class QueueRecoveryAcceptanceTests
         {
             await final.InitializeAsync(CancellationToken.None);
             var completed = Assert.Single(await final.LoadJobsAsync(CancellationToken.None));
-            Assert.Same(completed, QueueRecoveryPolicy.Recover(completed, File.Exists, DateTimeOffset.UtcNow));
+            Assert.Same(completed, QueueRecoveryPolicy.Recover(completed, path => PublishedOutputIdentity.Matches(completed, path), DateTimeOffset.UtcNow));
             Assert.Equal(QueueJobState.Completed, completed.State);
             Assert.Equal(record.ApprovedMetadata, completed.ApprovedMetadata);
             Assert.Single(Directory.GetFiles(files.Output, "*.epub", SearchOption.AllDirectories));
@@ -65,10 +65,10 @@ public sealed class QueueRecoveryAcceptanceTests
             await first.AddJobsAsync([record], CancellationToken.None);
             await Assert.ThrowsAsync<IOException>(() => files.Service().ConvertAsync(
                 new ConversionRequest(files.Source, files.Output, record.RequestedMetadata), CancellationToken.None,
-                beforePublication: async path =>
+                beforePublication: async (path, hash) =>
                 {
                     Assert.False(File.Exists(path));
-                    await first.SaveJobAsync(record with { State = QueueJobState.Completed, Progress = 100, OutputPath = path }, CancellationToken.None);
+                    await first.SaveJobAsync(record with { State = QueueJobState.Completed, Progress = 100, OutputPath = path, ErrorStage = "Publishing", TechnicalError = "sha256:" + hash }, CancellationToken.None);
                     throw new IOException("Simulated interruption before rename.");
                 }));
         }
@@ -90,7 +90,7 @@ public sealed class QueueRecoveryAcceptanceTests
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task<ConversionResult> conversion = files.Service().ConvertAsync(
             new ConversionRequest(files.Source, files.Output, record.RequestedMetadata), CancellationToken.None,
-            beforePublication: async path => { entered.SetResult(path); await release.Task; });
+            beforePublication: async (path, hash) => { entered.SetResult(path); await release.Task; });
         string output = await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.False(File.Exists(output));
         Assert.False(conversion.IsCompleted);

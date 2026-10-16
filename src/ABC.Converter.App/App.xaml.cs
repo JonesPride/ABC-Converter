@@ -25,7 +25,7 @@ public partial class App : Application
 
         try
         {
-        instanceMutex = new Mutex(false, @"Local\ABC.Converter.Queue");
+        instanceMutex = new Mutex(false, @"Global\ABC.Converter.Queue." + System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value);
         try { ownsMutex = instanceMutex.WaitOne(0); }
         catch (AbandonedMutexException) { ownsMutex = true; }
         if (!ownsMutex)

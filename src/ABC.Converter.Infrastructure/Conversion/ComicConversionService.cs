@@ -4,6 +4,7 @@ using ABC.Converter.Core.Files;
 using ABC.Converter.Core.Metadata;
 using ABC.Converter.Core.Models;
 using ABC.Converter.Core.Queue;
+using System.Security.Cryptography;
 
 namespace ABC.Converter.Infrastructure.Conversion;
 
@@ -46,7 +47,7 @@ public sealed class ComicConversionService
         ConversionRequest request,
         CancellationToken cancellationToken,
         Func<QueueJobState, int, Task>? checkpoint = null,
-        Func<string, Task>? beforePublication = null)
+        Func<string, string, Task>? beforePublication = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -188,17 +189,23 @@ public sealed class ComicConversionService
         string initialOutputPath,
         ConversionRequest request,
         string sourceFullPath,
-        Func<string, Task>? beforePublication,
+        Func<string, string, Task>? beforePublication,
         CancellationToken cancellationToken)
     {
         string outputPath = initialOutputPath;
+        string outputHash = string.Empty;
+        if (beforePublication is not null)
+        {
+            await using Stream validated = File.OpenRead(tempPath);
+            outputHash = Convert.ToHexString(await SHA256.HashDataAsync(validated, cancellationToken));
+        }
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (!File.Exists(outputPath))
             {
                 // A failed durable write must escape; only File.Move collisions are retried.
-                if (beforePublication is not null) await beforePublication(outputPath);
+                if (beforePublication is not null) await beforePublication(outputPath, outputHash);
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {

@@ -48,6 +48,18 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private bool _stopping;
     private bool _persistenceFailed;
     private int _initializationStarted;
+    private bool _ready;
+    private int _pendingMutations;
+    private TaskCompletionSource _mutationsDrained = CompletedSignal();
+    private Task _settingsWrite = Task.CompletedTask;
+    private readonly Action<Exception> _commandError;
+
+    private static TaskCompletionSource CompletedSignal()
+    {
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        signal.SetResult();
+        return signal;
+    }
 
     public MainWindowViewModel(
         ComicConversionService conversionService,
@@ -68,6 +80,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         ComicVineSettings = comicVineSettings;
         Action<Exception> onCommandException =
             commandExceptionHandler ?? ReportCommandException;
+        _commandError = onCommandException;
         _outputRoot = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             "ABC Converter");
@@ -95,7 +108,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             onCommandException);
         _retryAllFailedCommand = new AsyncCommand(
             RetryAllFailedAsync,
-            () => Jobs.Any(job => job.Status == "Failed"),
+            () => !_stopping && !_persistenceFailed && Volatile.Read(ref _isProcessing) == 0 && Jobs.Any(job => job.Status == "Failed"),
             onCommandException);
         _saveComicVineSettingsCommand = new AsyncCommand(
             SaveComicVineSettingsAsync,
@@ -108,7 +121,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             onCommandException);
         _approveMetadataCommand = new AsyncCommand(
             ApproveMetadataAsync,
-            () => SelectedJob?.MetadataReview is not null,
+            () => !_stopping && !_persistenceFailed && Volatile.Read(ref _isProcessing) == 0 && SelectedJob?.MetadataReview is not null,
             onCommandException);
         if (ComicVineSettings is not null)
         {
@@ -131,8 +144,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         get => _outputRoot;
         set
         {
+            if (_stopping) return;
             if (SetField(ref _outputRoot, value))
             {
+                if (_ready && _queueStore is not null)
+                    _settingsWrite = SaveOutputSettingAsync(_settingsWrite, value);
                 _startCommand.RaiseCanExecuteChanged();
             }
         }
@@ -200,7 +216,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         var recovered = new List<QueueJobRecord>();
         foreach (var record in records.OrderBy(j => j.CreatedUtc).ThenBy(j => j.Id))
         {
-            var job = QueueRecoveryPolicy.Recover(record, File.Exists, _utcNow());
+            var job = QueueRecoveryPolicy.Recover(record, path => PublishedOutputIdentity.Matches(record, path), _utcNow());
             if (!ReferenceEquals(record, job)) await _queueStore.SaveJobAsync(job, cancellationToken);
             recovered.Add(job);
         }
@@ -216,16 +232,58 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             }
             RaiseQueueStateChanged();
         });
+        _ready = true;
+        _settingsWrite = SaveOutputSettingAsync(_settingsWrite, OutputRoot);
+        await _settingsWrite;
+    }
+
+    private async Task SaveOutputSettingAsync(Task previous, string value)
+    {
+        try
+        {
+            await previous;
+            await _queueStore!.SaveSettingAsync("OutputRoot", value, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            _persistenceFailed = true;
+            _commandError(exception);
+            throw;
+        }
+        finally { await RunOnDispatcherAsync(RaiseQueueStateChanged); }
+    }
+
+    private async Task ChangeJobAsync(ConversionJobViewModel job, Action change)
+    {
+        lock (_processingLock)
+        {
+            if (_stopping || _persistenceFailed || Volatile.Read(ref _isProcessing) != 0)
+                throw new InvalidOperationException("Wait for queue processing and saving to finish before editing a job.");
+            if (_pendingMutations++ == 0)
+                _mutationsDrained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        try
+        {
+            await RunOnDispatcherAsync(change);
+            await PersistJobAsync(job);
+        }
+        finally
+        {
+            lock (_processingLock)
+                if (--_pendingMutations == 0) _mutationsDrained.TrySetResult();
+            await RunOnDispatcherAsync(RaiseQueueStateChanged);
+        }
     }
 
     private static string Identity(string path, string fingerprint) => path + "\0" + fingerprint;
 
-    private async Task PersistJobAsync(ConversionJobViewModel job, QueueJobState? durableState = null, string? outputPath = null)
+    private async Task PersistJobAsync(ConversionJobViewModel job, QueueJobState? durableState = null, string? outputPath = null, string? outputHash = null)
     {
         if (_queueStore is null) return;
         QueueJobRecord? record = null;
         await RunOnDispatcherAsync(() => record = job.ToRecord(OutputRoot, _utcNow()));
-        if (durableState is { } state) record = record! with { State = state, OutputPath = outputPath, Progress = 100 };
+        if (durableState is { } state) record = record! with { State = state, OutputPath = outputPath, Progress = 100,
+            ErrorStage = "Publishing", TechnicalError = "sha256:" + outputHash };
         try { await _queueStore.SaveJobAsync(record!, CancellationToken.None); }
         catch { _persistenceFailed = true; throw; }
     }
@@ -237,16 +295,17 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         try
         {
             if (_stopping || _persistenceFailed) throw new InvalidOperationException("The queue is not accepting new work.");
+            await _settingsWrite;
             string[] requestedPaths = paths.Where(path => !string.IsNullOrWhiteSpace(path)).ToArray();
             string[] discoveredPaths = await Task.Run(() => DiscoverComicPaths(requestedPaths));
             var jobs = new List<ConversionJobViewModel>();
             foreach (string path in discoveredPaths)
             {
-                string fingerprint = await _fingerprints.GetFingerprintAsync(path, _shutdown.Token);
+                string fingerprint = await Task.Run(() => _fingerprints.GetFingerprintAsync(path, _shutdown.Token), _shutdown.Token);
                 if (_knownSourcePaths.Contains(Identity(path, fingerprint))) continue;
                 string title = Path.GetFileNameWithoutExtension(path);
                 jobs.Add(new ConversionJobViewModel { SourcePath = path, Series = title,
-                    SourceFingerprint = fingerprint, CreatedUtc = _utcNow(), UpdatedUtc = _utcNow() });
+                    JobOutputRoot = OutputRoot, SourceFingerprint = fingerprint, CreatedUtc = _utcNow(), UpdatedUtc = _utcNow() });
             }
             IReadOnlyList<Guid> inserted = _queueStore is null ? jobs.Select(j => j.Id).ToArray() :
                 await _queueStore.AddJobsAsync(jobs.Select(j => j.ToRecord(OutputRoot, _utcNow())).ToArray(), _shutdown.Token);
@@ -271,29 +330,45 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         {
             if (_stopping || _persistenceFailed) return Task.CompletedTask;
             if (_processingTask is { IsCompleted: false }) return _processingTask;
+            if (_pendingMutations != 0 || !_settingsWrite.IsCompletedSuccessfully) return Task.CompletedTask;
             return _processingTask = ProcessQueueAsync(cancellationToken);
         }
     }
 
     public async Task PrepareForShutdownAsync(TimeSpan timeout)
     {
-        _stopping = true;
-        _shutdown.Cancel();
         Task? processing;
-        lock (_processingLock) processing = _processingTask;
+        Task mutations;
+        Task settings;
+        lock (_processingLock)
+        {
+            _stopping = true;
+            processing = _processingTask;
+            mutations = _mutationsDrained.Task;
+            settings = _settingsWrite;
+        }
+        string outputRoot = OutputRoot;
+        _shutdown.Cancel();
         using var deadline = new CancellationTokenSource(timeout);
-        if (processing is not null)
+        // Run even synchronous SQLite work off the dispatcher, and bound the whole operation.
+        Task finishing = Task.Run(async () =>
         {
-            try { await processing.WaitAsync(deadline.Token); }
-            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { return; }
-        }
-        await _addGate.WaitAsync(deadline.Token);
-        try
+            await Task.WhenAll(processing ?? Task.CompletedTask, mutations, settings);
+            await _addGate.WaitAsync(deadline.Token);
+            try
+            {
+                if (_queueStore is not null)
+                    await _queueStore.SaveSettingAsync("OutputRoot", outputRoot, deadline.Token);
+            }
+            finally { _addGate.Release(); }
+        });
+        try { await finishing.WaitAsync(timeout); }
+        catch (TimeoutException)
         {
-            if (_queueStore is not null)
-                await _queueStore.SaveSettingAsync("OutputRoot", OutputRoot, deadline.Token);
+            _ = finishing.ContinueWith(task => { _ = task.Exception; },
+                CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
         }
-        finally { _addGate.Release(); }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
     }
 
     private async Task ProcessQueueAsync(CancellationToken cancellationToken)
@@ -316,7 +391,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 RaiseQueueStateChanged();
             });
 
-            if (_queueStore is not null) await _queueStore.SaveSettingAsync("OutputRoot", outputRoot, CancellationToken.None);
             foreach (ConversionJobViewModel job in queuedJobs)
             {
                 if (_stopping || _persistenceFailed) break;
@@ -346,7 +420,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                         continue;
                     }
 
-                    job.JobOutputRoot = outputRoot;
+                    job.JobOutputRoot ??= outputRoot;
                     await PersistJobAsync(job);
                     if (_queueStore is not null && await _fingerprints.GetFingerprintAsync(job.SourcePath, jobCancellation.Token) != job.SourceFingerprint)
                         throw new IOException("The source CBZ changed after it was queued. Add the changed file as a new job.");
@@ -357,7 +431,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                         job.RequestedMetadata ?? new ComicMetadata(title, job.Series);
                     var request = new ConversionRequest(
                         job.SourcePath,
-                        outputRoot,
+                        job.JobOutputRoot,
                         requestedMetadata,
                         MetadataIsApproved: job.ApprovedMetadata is not null);
                     ConversionResult result = await Task.Run(
@@ -369,7 +443,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                                 await RunOnDispatcherAsync(() => { job.Status = ConversionJobViewModel.DisplayState(state); job.Progress = progress; });
                                 await PersistJobAsync(job);
                             },
-                            _queueStore is null ? null : path => PersistJobAsync(job, QueueJobState.Completed, path)),
+                            _queueStore is null ? null : (path, hash) => PersistJobAsync(job, QueueJobState.Completed, path, hash)),
                         jobCancellation.Token);
 
                     await RunOnDispatcherAsync(() =>
@@ -595,9 +669,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         var job = SelectedJob;
         if (job?.MetadataReview is null) return;
-        job.ApprovedMetadata = job.MetadataReview.BuildMetadata();
-        ResetForRetry(job, incrementRetry: false);
-        await PersistJobAsync(job);
+        ComicMetadata approved = job.MetadataReview.BuildMetadata();
+        await ChangeJobAsync(job, () => { job.ApprovedMetadata = approved; ResetForRetry(job, incrementRetry: false); });
         RaiseQueueStateChanged();
     }
 
@@ -605,8 +678,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         if (SelectedJob is { } job)
         {
-            ResetForRetry(job);
-            await PersistJobAsync(job);
+            await ChangeJobAsync(job, () => ResetForRetry(job));
         }
     }
 
@@ -614,8 +686,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         foreach (var job in Jobs.Where(j => j.Status == "Failed").ToArray())
         {
-            ResetForRetry(job);
-            await PersistJobAsync(job);
+            await ChangeJobAsync(job, () => ResetForRetry(job));
         }
     }
 
@@ -635,7 +706,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private bool CanStart()
     {
-        return !_stopping && !_persistenceFailed && Volatile.Read(ref _isProcessing) == 0 &&
+        return !_stopping && !_persistenceFailed && _pendingMutations == 0 && _settingsWrite.IsCompletedSuccessfully && Volatile.Read(ref _isProcessing) == 0 &&
             !string.IsNullOrWhiteSpace(OutputRoot) &&
             Jobs.Any(job => job.Status == "Queued");
     }
@@ -647,7 +718,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private bool CanRetrySelected()
     {
-        return SelectedJob?.Status == "Failed";
+        return !_stopping && !_persistenceFailed && Volatile.Read(ref _isProcessing) == 0 && SelectedJob?.Status == "Failed";
     }
 
     private void SetActiveJob(

@@ -114,18 +114,20 @@ without first keeping a copy. Database initialization failures block startup.
 On restart, interrupted active stages return to Queued. Needs Review, Failed,
 and Cancelled jobs keep their states and user-approved metadata. Completed jobs
 stay completed if their recorded EPUB exists; missing EPUBs become retryable
-Recovery failures. Only one desktop instance runs per Windows session.
+Recovery failures. Only one desktop instance runs per Windows user across sessions.
 
 A duplicate is the same canonical source path (case-insensitive) and the same
 file length and UTC modification timestamp. A changed source at that path can
 be added as a new job; this fingerprint is a change detector, not a content hash.
-Original CBZ files remain read-only.
+Original CBZ files remain read-only. Changing the default output folder affects
+newly added jobs; restored jobs retain their saved destination.
 
 Closing the window cancels active work and waits up to five seconds to save.
 If interrupted, the last durable state is recovered next time. The final output
-path is recorded before its atomic publication: a crash before that rename
+path and a SHA-256 publication receipt are recorded before atomic publication: a crash before that rename
 leaves a visible missing-output failure requiring explicit retry, while a crash
-after it preserves completion and avoids duplicate conversion.
+after it preserves completion and avoids duplicate conversion. Recovery checks
+the receipt before accepting an output that was not fully acknowledged.
 
 The metadata pipeline reads root-level ComicInfo.xml and optionally looks up
 ComicVine using a user-supplied API key. Reviewed metadata is retained for retry
