@@ -194,30 +194,24 @@ public sealed class ComicConversionService
         string outputPath = initialOutputPath;
         while (true)
         {
-            try
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!File.Exists(outputPath))
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                // A failed durable write must escape; only File.Move collisions are retried.
                 if (beforePublication is not null) await beforePublication(outputPath);
-                // The durable output intent is committed before the atomic rename. If
-                // interrupted now, recovery sees either this output or a missing-output failure.
                 cancellationToken.ThrowIfCancellationRequested();
-                File.Move(tempPath, outputPath);
-                return outputPath;
-            }
-            catch (IOException) when (File.Exists(outputPath))
-            {
-                string nextPath = outputPathPolicy.GetOutputPath(
-                    request.OutputRoot,
-                    request.Metadata,
-                    sourceFullPath);
-                if (string.Equals(nextPath, outputPath, StringComparison.OrdinalIgnoreCase))
+                try
                 {
-                    throw new IOException($"Output already exists: {outputPath}");
+                    File.Move(tempPath, outputPath);
+                    return outputPath;
                 }
-
-                outputPath = nextPath;
-                Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+                catch (IOException) when (File.Exists(outputPath)) { }
             }
+            string nextPath = outputPathPolicy.GetOutputPath(request.OutputRoot, request.Metadata, sourceFullPath);
+            if (string.Equals(nextPath, outputPath, StringComparison.OrdinalIgnoreCase))
+                throw new IOException($"Output already exists: {outputPath}");
+            outputPath = nextPath;
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         }
     }
 

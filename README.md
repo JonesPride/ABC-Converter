@@ -102,17 +102,35 @@ after conversion.
 A failed or cancelled conversion does not publish a new final EPUB and removes
 its temporary build file.
 
-## Foundation scope
+## Persistent queue and recovery
 
-This slice keeps the queue in memory and processes jobs in sequence. Closing
-the app discards unfinished queue state. Queue persistence, concurrent
-workers, pause/resume, recovery, and durable logs belong to the next plan.
+The app saves its queue to `%LOCALAPPDATA%\ABC Converter\abc-converter.db`.
+The database contains source identities, queue states, metadata approvals,
+pending review candidates, output paths, errors, retry counts, and the output
+folder setting. ComicVine API keys remain in Windows Credential Manager.
+Back up the database while the app is closed; do not delete it to troubleshoot
+without first keeping a copy. Database initialization failures block startup.
 
-The metadata pipeline starts with filename-derived defaults, reads root-level
-`ComicInfo.xml`, and optionally looks up ComicVine metadata using a user-supplied
-API key. The desktop interface includes ComicVine settings and metadata review.
-Queue and reviewed-metadata persistence remain unfinished; draft PR #11 is
-test-first work in progress, not a completed recovery implementation.
+On restart, interrupted active stages return to Queued. Needs Review, Failed,
+and Cancelled jobs keep their states and user-approved metadata. Completed jobs
+stay completed if their recorded EPUB exists; missing EPUBs become retryable
+Recovery failures. Only one desktop instance runs per Windows session.
+
+A duplicate is the same canonical source path (case-insensitive) and the same
+file length and UTC modification timestamp. A changed source at that path can
+be added as a new job; this fingerprint is a change detector, not a content hash.
+Original CBZ files remain read-only.
+
+Closing the window cancels active work and waits up to five seconds to save.
+If interrupted, the last durable state is recovered next time. The final output
+path is recorded before its atomic publication: a crash before that rename
+leaves a visible missing-output failure requiring explicit retry, while a crash
+after it preserves completion and avoids duplicate conversion.
+
+The metadata pipeline reads root-level ComicInfo.xml and optionally looks up
+ComicVine using a user-supplied API key. Reviewed metadata is retained for retry
+and restart. Queue processing remains sequential. Concurrent workers, pause,
+structured durable logs, and ComicVine SQLite caching remain future work.
 
 ## Image handling
 

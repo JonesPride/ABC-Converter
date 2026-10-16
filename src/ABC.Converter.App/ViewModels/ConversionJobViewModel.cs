@@ -26,6 +26,7 @@ public sealed class ConversionJobViewModel : INotifyPropertyChanged
     public string? ErrorStage { get; internal set; }
     public string? TechnicalError { get; internal set; }
     public bool Retryable { get; internal set; }
+    internal IReadOnlyList<QueueMetadataCandidate>? PersistedCandidates { get; set; }
     internal ComicMetadata? RequestedMetadata { get; set; }
     internal string? JobOutputRoot { get; set; }
 
@@ -43,7 +44,7 @@ public sealed class ConversionJobViewModel : INotifyPropertyChanged
     {
         UpdatedUtc = utcNow;
         QueueMetadataReview? review = MetadataReview is null ? null : new(
-            MetadataReview.BuildMetadata(), MetadataReview.Candidates.Select(c => new QueueMetadataCandidate(
+            MetadataReview.BuildMetadata(), PersistedCandidates ?? MetadataReview.Candidates.Select(c => new QueueMetadataCandidate(
                 "ComicVine", c.Id, c.Name, c.IssueNumber, c.Series, c.StartYear)).ToArray());
         return new(Id, SourcePath, SourceFingerprint, JobOutputRoot ?? outputRoot,
             RequestedMetadata ?? new ComicMetadata(Path.GetFileNameWithoutExtension(SourcePath), Series),
@@ -55,6 +56,7 @@ public sealed class ConversionJobViewModel : INotifyPropertyChanged
     {
         Id = record.Id, SourcePath = record.SourcePath, SourceFingerprint = record.SourceFingerprint,
         Series = record.RequestedMetadata.Series, RequestedMetadata = record.RequestedMetadata,
+        PersistedCandidates = record.MetadataReview?.Candidates,
         JobOutputRoot = record.OutputRoot, Status = DisplayState(record.State), Progress = record.Progress,
         CreatedUtc = record.CreatedUtc, UpdatedUtc = record.UpdatedUtc, ApprovedMetadata = record.ApprovedMetadata,
         MetadataReview = record.MetadataReview is null ? null : new MetadataReviewViewModel(

@@ -348,6 +348,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
                     job.JobOutputRoot = outputRoot;
                     await PersistJobAsync(job);
+                    if (_queueStore is not null && await _fingerprints.GetFingerprintAsync(job.SourcePath, jobCancellation.Token) != job.SourceFingerprint)
+                        throw new IOException("The source CBZ changed after it was queued. Add the changed file as a new job.");
                     string title = Path.GetFileNameWithoutExtension(
                         job.SourcePath);
                     ComicMetadata requestedMetadata =
@@ -624,6 +626,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         job.ErrorMessage = null;
         job.OutputPath = null;
         job.MetadataReview = null;
+        job.PersistedCandidates = null;
         job.ErrorStage = null;
         job.TechnicalError = null;
         job.Retryable = false;
@@ -714,7 +717,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         System.Diagnostics.Trace.TraceError(
             "Unhandled command failure: {0}",
-            exception);
+            SafeExceptionDetails.Format(exception));
     }
 
     private bool SetField<T>(
