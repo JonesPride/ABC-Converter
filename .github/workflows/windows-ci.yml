@@ -67,3 +67,11 @@ jobs:
       - name: Test
         shell: pwsh
         run: .\scripts\Test.ps1 -Configuration Release
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-test-results
+          path: TestResults/**/*.trx
+          if-no-files-found: ignore
+          retention-days: 14

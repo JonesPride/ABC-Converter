@@ -3,6 +3,7 @@ using ABC.Converter.Core.Epub;
 using ABC.Converter.Core.Files;
 using ABC.Converter.Core.Metadata;
 using ABC.Converter.Core.Models;
+using ABC.Converter.Core.Queue;
 
 namespace ABC.Converter.Infrastructure.Conversion;
 
@@ -43,7 +44,9 @@ public sealed class ComicConversionService
 
     public async Task<ConversionResult> ConvertAsync(
         ConversionRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<QueueJobState, int, Task>? checkpoint = null,
+        Func<string, Task>? beforePublication = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -53,6 +56,7 @@ public sealed class ComicConversionService
         ComicSource source = await archiveReader.ReadAsync(
             sourceFullPath,
             cancellationToken);
+        if (checkpoint is not null) await checkpoint(QueueJobState.FetchingMetadata, 15);
         ComicMetadata metadata = request.MetadataIsApproved
             ? request.Metadata
             : await metadataResolver.ResolveAsync(
@@ -73,12 +77,14 @@ public sealed class ComicConversionService
             $".{Path.GetFileName(outputPath)}.{Guid.NewGuid():N}.tmp");
         try
         {
+            if (checkpoint is not null) await checkpoint(QueueJobState.BuildingEpub, 35);
             await epubBuilder.BuildAsync(
                 source,
                 resolvedRequest.Metadata,
                 resolvedRequest.Direction,
                 tempPath,
                 cancellationToken);
+            if (checkpoint is not null) await checkpoint(QueueJobState.Validating, 85);
             await validator.ValidateAsync(tempPath, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -91,11 +97,14 @@ public sealed class ComicConversionService
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            outputPath = PublishWithoutOverwrite(
+            if (checkpoint is not null) await checkpoint(QueueJobState.Publishing, 95);
+            outputPath = await PublishWithoutOverwriteAsync(
                 tempPath,
                 outputPath,
                 resolvedRequest,
-                sourceFullPath);
+                sourceFullPath,
+                beforePublication,
+                cancellationToken);
             return new ConversionResult(
                 sourceFullPath,
                 outputPath,
@@ -174,17 +183,24 @@ public sealed class ComicConversionService
         }
     }
 
-    private string PublishWithoutOverwrite(
+    private async Task<string> PublishWithoutOverwriteAsync(
         string tempPath,
         string initialOutputPath,
         ConversionRequest request,
-        string sourceFullPath)
+        string sourceFullPath,
+        Func<string, Task>? beforePublication,
+        CancellationToken cancellationToken)
     {
         string outputPath = initialOutputPath;
         while (true)
         {
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (beforePublication is not null) await beforePublication(outputPath);
+                // The durable output intent is committed before the atomic rename. If
+                // interrupted now, recovery sees either this output or a missing-output failure.
+                cancellationToken.ThrowIfCancellationRequested();
                 File.Move(tempPath, outputPath);
                 return outputPath;
             }

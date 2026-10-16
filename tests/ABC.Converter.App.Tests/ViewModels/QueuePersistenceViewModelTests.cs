@@ -329,7 +329,8 @@ public sealed class QueuePersistenceViewModelTests
 
         Assert.Equal(1, reader.ReadCount);
         Assert.Equal(
-            [QueueJobState.Scanning, QueueJobState.Completed],
+            [QueueJobState.Scanning, QueueJobState.FetchingMetadata, QueueJobState.BuildingEpub,
+                QueueJobState.Validating, QueueJobState.Publishing, QueueJobState.Completed, QueueJobState.Completed],
             store.SavedJobs.Select(job => job.State));
     }
 

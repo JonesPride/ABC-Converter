@@ -7,6 +7,136 @@ namespace ABC.Converter.Tests.ComicVine;
 
 public sealed class ComicVineClientTests
 {
+    private const int ResponseLimit = 1024 * 1024;
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(10L)]
+    [InlineData(1048577L)]
+    public async Task RejectsOversizedResponsesWithoutReadingBeyondTheLimit(long? advertisedLength)
+    {
+        using var stream = new TrackingStream(CreatePayload(ResponseLimit + 100));
+        var content = new StreamContent(stream);
+        content.Headers.ContentLength = advertisedLength;
+        using var http = new HttpClient(new RecordingHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = content }));
+        var client = new ComicVineClient(http, "secret", "ABC-Converter tests");
+
+        ComicVineApiException exception = await Assert.ThrowsAsync<ComicVineApiException>(
+            () => client.SearchIssuesAsync("Batman", "1", CancellationToken.None));
+
+        Assert.Equal(ComicVineFailureKind.InvalidResponse, exception.Kind);
+        Assert.InRange(stream.BytesRead, 0, ResponseLimit + 1);
+        Assert.True(stream.WasDisposed);
+        if (advertisedLength > ResponseLimit)
+        {
+            Assert.Equal(0, stream.BytesRead);
+        }
+    }
+
+    [Fact]
+    public async Task AcceptsResponseExactlyAtTheLimit()
+    {
+        using var stream = new TrackingStream(CreatePayload(ResponseLimit));
+        using var http = new HttpClient(new RecordingHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(stream) }));
+        var client = new ComicVineClient(http, "secret", "ABC-Converter tests");
+
+        var results = await client.SearchIssuesAsync("Batman", "1", CancellationToken.None);
+
+        Assert.Empty(results);
+        Assert.Equal(ResponseLimit, stream.BytesRead);
+    }
+
+    [Fact]
+    public async Task HttpFailuresDoNotReadTheResponseBody()
+    {
+        using var stream = new TrackingStream(CreatePayload(ResponseLimit + 100));
+        var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        {
+            Content = new StreamContent(stream),
+        };
+        response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(
+            TimeSpan.FromMinutes(1));
+        using var http = new HttpClient(new RecordingHandler(response));
+        var client = new ComicVineClient(http, "secret", "ABC-Converter tests");
+
+        var exception = await Assert.ThrowsAsync<ComicVineApiException>(
+            () => client.SearchIssuesAsync("Batman", "1", CancellationToken.None));
+
+        Assert.Equal(ComicVineFailureKind.RateLimited, exception.Kind);
+        Assert.Equal(TimeSpan.FromMinutes(1), exception.RetryAfter);
+        Assert.Equal(0, stream.BytesRead);
+        Assert.True(stream.WasDisposed);
+    }
+
+    private static byte[] CreatePayload(int size)
+    {
+        const string json = """{"status_code":1,"results":[]}""";
+        return Encoding.UTF8.GetBytes(json.PadRight(size));
+    }
+
+    private sealed class TrackingStream(byte[] data) : Stream
+    {
+        private readonly MemoryStream inner = new(data);
+
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public int BytesRead { get; private set; }
+
+        public bool WasDisposed { get; private set; }
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            int count = await inner.ReadAsync(buffer[..Math.Min(buffer.Length, 4096)], cancellationToken);
+            BytesRead += count;
+            return count;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            WasDisposed = true;
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            int read = inner.Read(buffer, offset, Math.Min(count, 4096));
+            BytesRead += read;
+            return read;
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count,
+            CancellationToken cancellationToken) =>
+            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override void Flush() => throw new NotSupportedException();
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     [Fact]
     public async Task SearchUsesRequiredAuthenticationAndUserAgent()
     {

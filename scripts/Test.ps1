@@ -6,6 +6,6 @@ New-Item -ItemType Directory -Force -Path $results | Out-Null
 dotnet test "$PSScriptRoot\..\ABC.Converter.sln" `
     --configuration $Configuration `
     --no-build `
-    --logger "trx;LogFileName=abc-converter.trx" `
+    --logger "trx" `
     --results-directory $results
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

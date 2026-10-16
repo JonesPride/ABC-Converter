@@ -39,7 +39,9 @@ administrator if PowerShell still blocks the scripts.
 `Setup.ps1` checks for .NET 8 and restores NuGet packages. `Build.ps1` builds
 the solution with warnings treated as errors. `Test.ps1` uses the existing
 build, so run `Build.ps1` first. Test results are written to
-`TestResults\abc-converter.trx`.
+`TestResults\` using generated filenames so reports from the two test projects
+do not overwrite each other. Windows CI retains the TRX files as a
+`windows-test-results` artifact when tests produce reports.
 
 The build and test scripts use `Debug` when you omit `-Configuration`.
 `Run.ps1` starts the WPF application from
@@ -106,6 +108,23 @@ This slice keeps the queue in memory and processes jobs in sequence. Closing
 the app discards unfinished queue state. Queue persistence, concurrent
 workers, pause/resume, recovery, and durable logs belong to the next plan.
 
-ComicInfo.xml metadata, ComicVine matching, result caching, and metadata
-review also belong to later plans. The current converter derives its basic
-title and series values from the source filename.
+The metadata pipeline starts with filename-derived defaults, reads root-level
+`ComicInfo.xml`, and optionally looks up ComicVine metadata using a user-supplied
+API key. The desktop interface includes ComicVine settings and metadata review.
+Queue and reviewed-metadata persistence remain unfinished; draft PR #11 is
+test-first work in progress, not a completed recovery implementation.
+
+## Image handling
+
+The converter uses SkiaSharp to identify JPEG, PNG, and WebP page dimensions.
+Its native Windows libraries are supplied by the SkiaSharp NuGet dependencies;
+no Six Labors license key is required. ImageSharp has been removed.
+
+Windows CI verifies restore, the dependency audit, the Release build, and both
+test projects. A manual Windows launch and conversion check is still deferred.
+
+## License
+
+ABC Converter's original code is licensed under the [MIT License](LICENSE).
+Third-party dependencies, including SkiaSharp and its native Skia libraries, retain their own
+licenses and usage requirements; the project's MIT license does not replace them.

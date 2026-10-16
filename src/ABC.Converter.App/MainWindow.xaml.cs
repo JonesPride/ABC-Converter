@@ -10,6 +10,25 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Closing += OnClosing;
+    }
+
+    private bool closeReady;
+    private bool closePending;
+
+    private async void OnClosing(object? sender, System.ComponentModel.CancelEventArgs eventArgs)
+    {
+        if (closeReady || DataContext is not MainWindowViewModel viewModel) return;
+        eventArgs.Cancel = true;
+        if (closePending) return;
+        closePending = true;
+        try { await viewModel.PrepareForShutdownAsync(TimeSpan.FromSeconds(5)); }
+        catch (Exception)
+        {
+            MessageBox.Show(this, "The queue could not finish saving. Interrupted work will be recovered from the last saved state on the next launch.",
+                "Queue recovery", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally { closeReady = true; Close(); }
     }
 
     private void OnDragOver(object sender, DragEventArgs eventArgs)

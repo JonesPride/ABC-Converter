@@ -44,6 +44,7 @@ public sealed class ComicVineApiException : Exception
 
 public sealed class ComicVineClient
 {
+    private const int MaxResponseBytes = 1024 * 1024;
     private static readonly Uri ApiBaseAddress =
         new("https://comicvine.gamespot.com/api/");
     private readonly HttpClient httpClient;
@@ -101,18 +102,56 @@ public sealed class ComicVineClient
 
         using (response)
         {
-            string payload = await response.Content.ReadAsStringAsync(
-                cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 throw CreateHttpFailure(response);
             }
 
+            byte[] payload = await ReadBoundedPayloadAsync(
+                response.Content,
+                cancellationToken);
             return ParseIssues(payload);
         }
     }
 
-    private static IReadOnlyList<ComicVineIssue> ParseIssues(string payload)
+    private static async Task<byte[]> ReadBoundedPayloadAsync(
+        HttpContent content,
+        CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength > MaxResponseBytes)
+        {
+            throw ResponseTooLarge();
+        }
+
+        using Stream stream = await content.ReadAsStreamAsync(cancellationToken);
+        using var payload = new MemoryStream();
+        byte[] buffer = new byte[8192];
+        while (true)
+        {
+            // Read at most one byte past the limit, including for chunked responses.
+            int remaining = MaxResponseBytes - checked((int)payload.Length);
+            int count = await stream.ReadAsync(
+                buffer.AsMemory(0, Math.Min(buffer.Length, remaining + 1)),
+                cancellationToken);
+            if (count == 0)
+            {
+                return payload.ToArray();
+            }
+
+            if (count > remaining)
+            {
+                throw ResponseTooLarge();
+            }
+
+            payload.Write(buffer, 0, count);
+        }
+    }
+
+    private static ComicVineApiException ResponseTooLarge() => new(
+        ComicVineFailureKind.InvalidResponse,
+        "ComicVine response exceeded the 1 MiB size limit.");
+
+    private static IReadOnlyList<ComicVineIssue> ParseIssues(ReadOnlyMemory<byte> payload)
     {
         try
         {
