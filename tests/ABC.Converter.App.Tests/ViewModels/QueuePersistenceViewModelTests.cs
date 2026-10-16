@@ -499,6 +499,71 @@ public sealed class QueuePersistenceViewModelTests
     }
 
     [Fact]
+    public async Task RecoveryDoesNotAcceptAnUnrelatedFileAtTheIntendedOutputPath()
+    {
+        using var files = new TemporaryDirectory();
+        string output = files.Write("other.epub", [0x01, 0x02]);
+        var completed = CreateRecord("collision.cbz", QueueJobState.Completed) with
+        {
+            OutputPath = output, ErrorStage = "Publishing", TechnicalError = "sha256:" + new string('0', 64)
+        };
+        var store = new InMemoryQueueStore([completed]);
+        var viewModel = CreateViewModel(store);
+        await viewModel.InitializeAsync(CancellationToken.None);
+        Assert.Equal("Failed", Assert.Single(viewModel.Jobs).Status);
+        Assert.Equal("Recovery", Assert.Single(store.Records).ErrorStage);
+    }
+
+    [Fact]
+    public async Task RestoredJobKeepsItsRecordedOutputRoot()
+    {
+        using var files = new TemporaryDirectory();
+        string source = files.Write("root.cbz", [0x01]);
+        string recordedRoot = files.PathFor("recorded-root");
+        var record = CreateRecord(source) with { OutputRoot = recordedRoot };
+        var store = new InMemoryQueueStore([record], new Dictionary<string, string>
+        {
+            ["OutputRoot"] = files.PathFor("different-default")
+        });
+        var viewModel = CreateViewModel(store);
+        await viewModel.InitializeAsync(CancellationToken.None);
+        await viewModel.StartAsync(CancellationToken.None);
+        var completed = Assert.Single(store.Records);
+        Assert.Equal(recordedRoot, completed.OutputRoot);
+        Assert.StartsWith(recordedRoot, completed.OutputPath!);
+    }
+
+    [Fact]
+    public async Task AddingJobsPersistsTheirChosenDefaultFolderBeforeRestart()
+    {
+        using var files = new TemporaryDirectory();
+        var store = new InMemoryQueueStore();
+        var first = CreateViewModel(store);
+        await first.InitializeAsync(CancellationToken.None);
+        string selected = files.PathFor("selected-default");
+        first.OutputRoot = selected;
+        await first.AddPathsAsync([files.Write("folder.cbz", [0x01])]);
+        var reopened = CreateViewModel(store);
+        await reopened.InitializeAsync(CancellationToken.None);
+        Assert.Equal(selected, reopened.OutputRoot);
+    }
+
+    [Fact]
+    public async Task ShutdownDeadlineBoundsAnUncooperativeSettingsWrite()
+    {
+        var store = new InMemoryQueueStore();
+        var viewModel = CreateViewModel(store);
+        await viewModel.InitializeAsync(CancellationToken.None);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        store.BeforeSaveSettingAsync = (_, _) => release.Task;
+        try
+        {
+            await viewModel.PrepareForShutdownAsync(TimeSpan.FromMilliseconds(50)).WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Fact]
     public async Task QueuedCancellationIsPersisted()
     {
         using var files = new TemporaryDirectory();

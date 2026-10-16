@@ -28,6 +28,8 @@ internal sealed class InMemoryQueueStore : IQueueStore
 
     public Func<QueueJobRecord, Task>? BeforeSaveJobAsync { get; set; }
 
+    public Func<string, string, Task>? BeforeSaveSettingAsync { get; set; }
+
     public int InitializeCallCount { get; private set; }
 
     public IReadOnlyList<QueueJobRecord> Records
@@ -81,18 +83,17 @@ internal sealed class InMemoryQueueStore : IQueueStore
         }
     }
 
-    public Task SaveSettingAsync(
+    public async Task SaveSettingAsync(
         string key,
         string value,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (BeforeSaveSettingAsync is not null) await BeforeSaveSettingAsync(key, value);
         lock (sync)
         {
             settings[key] = value;
         }
-
-        return Task.CompletedTask;
     }
 
     public async Task<IReadOnlyList<Guid>> AddJobsAsync(
