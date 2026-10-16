@@ -2,7 +2,7 @@ using System.IO.Compression;
 using ABC.Converter.Core.Archives;
 using ABC.Converter.Core.Models;
 using ABC.Converter.Core.Sorting;
-using SixLabors.ImageSharp;
+using SkiaSharp;
 
 namespace ABC.Converter.Infrastructure.Archives;
 
@@ -327,27 +327,23 @@ public sealed class CbzArchiveReader : IComicArchiveReader
         }
     }
 
-    private static async Task<(int Width, int Height)> ReadDimensionsAsync(
+    private static Task<(int Width, int Height)> ReadDimensionsAsync(
         Stream stream,
         string mediaType,
-        CancellationToken cancellationToken)
-    {
-        try
+        CancellationToken cancellationToken) =>
+        Task.Run(() =>
         {
-            ImageInfo? info = await Image.IdentifyAsync(stream, cancellationToken);
-            if (info is null)
+            cancellationToken.ThrowIfCancellationRequested();
+            // SKCodec reads encoded headers without allocating a decoded pixel buffer.
+            // Its managed-stream adapter supports non-seekable ZIP entry streams.
+            using SKCodec? codec = SKCodec.Create(stream, out SKCodecResult result);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (codec is null || codec.Info.Width <= 0 || codec.Info.Height <= 0)
             {
                 throw new InvalidDataException(
-                    $"Cannot identify {mediaType} image.");
+                    $"Cannot identify {mediaType} image ({result}).");
             }
 
-            return (info.Width, info.Height);
-        }
-        catch (ImageFormatException exception)
-        {
-            throw new InvalidDataException(
-                $"Cannot read dimensions for {mediaType}.",
-                exception);
-        }
-    }
+            return (codec.Info.Width, codec.Info.Height);
+        }, cancellationToken);
 }
