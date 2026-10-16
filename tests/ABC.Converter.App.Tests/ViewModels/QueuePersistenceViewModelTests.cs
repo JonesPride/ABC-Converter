@@ -466,6 +466,39 @@ public sealed class QueuePersistenceViewModelTests
     }
 
     [Fact]
+    public async Task StartCannotOvertakeAnUncommittedRetry()
+    {
+        using var files = new TemporaryDirectory();
+        string path = files.Write("retry-order.cbz", [0x01]);
+        var failed = CreateRecord(path, QueueJobState.Failed);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new InMemoryQueueStore([failed])
+        {
+            BeforeSaveJobAsync = record =>
+            {
+                if (record.State != QueueJobState.Queued) return Task.CompletedTask;
+                entered.TrySetResult();
+                return release.Task;
+            }
+        };
+        var reader = new RecordingArchiveReader();
+        var viewModel = CreateViewModel(store, service: ConversionHarness.CreateService(reader));
+        viewModel.OutputRoot = files.PathFor("output");
+        await viewModel.InitializeAsync(CancellationToken.None);
+        viewModel.SelectedJob = Assert.Single(viewModel.Jobs);
+        Task retry = Assert.IsType<AsyncCommand>(viewModel.RetrySelectedCommand).ExecuteAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await viewModel.StartAsync(CancellationToken.None);
+        Assert.Equal(0, reader.ReadCount);
+        release.TrySetResult();
+        await retry.WaitAsync(TimeSpan.FromSeconds(5));
+        await viewModel.StartAsync(CancellationToken.None);
+        Assert.Equal(1, reader.ReadCount);
+        Assert.Equal(QueueJobState.Completed, Assert.Single(store.Records).State);
+    }
+
+    [Fact]
     public async Task QueuedCancellationIsPersisted()
     {
         using var files = new TemporaryDirectory();
