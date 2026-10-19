@@ -31,7 +31,7 @@ try {
         if ($metadata.Count -eq 0) { throw "Missing package license metadata: $package" }
     }
     foreach ($required in @('skiasharp', 'skiasharp.nativeassets.win32',
-        'sqlitepclraw.bundle_e_sqlite3', 'sqlitepclraw.lib.e_sqlite3',
+        'sqlitepclraw.bundle_e_sqlite3', 'sqlitepclraw.config.e_sqlite3', 'sqlite',
         'microsoft.netcore.app.runtime.win-x64', 'microsoft.windowsdesktop.app.runtime.win-x64')) {
         if (!($packages | Where-Object { $_.StartsWith("$required/", [StringComparison]::Ordinal) })) {
             throw "Missing required dependency notices: $required"
