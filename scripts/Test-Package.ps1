@@ -19,6 +19,24 @@ try {
         if (!(Test-Path (Join-Path $stage $name))) { throw "Missing packaged dependency: $name" }
     }
     $config = Get-Content (Join-Path $stage 'ABC.Converter.App.runtimeconfig.json') -Raw | ConvertFrom-Json
+    $notices = Join-Path $stage 'ThirdPartyLicenses'
+    $packages = @(Get-Content (Join-Path $notices 'packages.txt'))
+    if ($packages.Count -eq 0) { throw 'Packaged dependency inventory is empty.' }
+    foreach ($package in $packages) {
+        if ($package -notmatch '^[a-z0-9_.-]+/[a-z0-9_.+-]+$') {
+            throw "Invalid packaged dependency identity: $package"
+        }
+        $directory = Join-Path $notices $package
+        $metadata = @(Get-ChildItem -LiteralPath $directory -Recurse -File -Filter '*.nuspec')
+        if ($metadata.Count -eq 0) { throw "Missing package license metadata: $package" }
+    }
+    foreach ($required in @('skiasharp', 'skiasharp.nativeassets.win32',
+        'sqlitepclraw.bundle_e_sqlite3', 'sqlitepclraw.lib.e_sqlite3',
+        'microsoft.netcore.app.runtime.win-x64', 'microsoft.windowsdesktop.app.runtime.win-x64')) {
+        if (!($packages | Where-Object { $_.StartsWith("$required/", [StringComparison]::Ordinal) })) {
+            throw "Missing required dependency notices: $required"
+        }
+    }
     $frameworks = @($config.runtimeOptions.includedFrameworks.name)
     foreach ($name in @('Microsoft.NETCore.App', 'Microsoft.WindowsDesktop.App')) {
         if ($frameworks -notcontains $name) { throw "Runtime is not self-contained: $name" }
@@ -40,3 +58,4 @@ try {
 finally {
     if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 }
+

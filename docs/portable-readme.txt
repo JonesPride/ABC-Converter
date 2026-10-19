@@ -17,5 +17,8 @@ will not remove the queue, settings, credentials, or converted EPUBs.
 This is an unsigned preview build. Manual desktop testing remains pending.
 The ZIP includes the project's MIT LICENSE and third-party package notices
 under ThirdPartyLicenses. Dependencies retain their own licenses.
+ThirdPartyLicenses/packages.txt lists the restored package identities.
+Before sharing a build, verify its ZIP and matching SHA-256 sidecar together.
 
 Source and issue tracker: https://github.com/JonesPride/ABC-Converter
+

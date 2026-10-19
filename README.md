@@ -29,6 +29,12 @@ folder while the app is closed. Queue data remains in Local AppData, so replacin
 the extracted app does not reset it. An installer and automatic updates are
 future work.
 
+Packaging stages compression and checksum creation before replacing a previous
+build. Replacement of the ZIP and checksum is not atomic; if interrupted, rerun
+packaging and verification before distributing either file. Verification checks
+the restored package inventory and its NuGet metadata, including SkiaSharp,
+SQLite, and bundled runtimes. This does not replace a license compliance review.
+
 ## Developer requirements
 
 - Windows 10 version 22H2 or Windows 11 on an x64 PC
@@ -172,3 +178,4 @@ test projects. A manual Windows launch and conversion check is still deferred.
 ABC Converter's original code is licensed under the [MIT License](LICENSE).
 Third-party dependencies, including SkiaSharp and its native Skia libraries, retain their own
 licenses and usage requirements; the project's MIT license does not replace them.
+

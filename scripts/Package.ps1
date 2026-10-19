@@ -6,6 +6,7 @@ $root = Split-Path $PSScriptRoot -Parent
 $artifacts = Join-Path $root 'artifacts'
 $stage = Join-Path $artifacts ([guid]::NewGuid().ToString('N'))
 $zip = Join-Path $artifacts 'ABC-Converter-win-x64.zip'
+$pendingZip = Join-Path $artifacts (([guid]::NewGuid().ToString('N')) + '.zip')
 $project = Join-Path $root 'src\ABC.Converter.App\ABC.Converter.App.csproj'
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 try {
@@ -50,12 +51,29 @@ try {
         }
         if (!$found) { throw "Cannot locate restored package $package for notices." }
     }
-    if (Test-Path $zip) { Remove-Item $zip }
-    Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal
-    $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-    "$hash *$(Split-Path $zip -Leaf)" | Set-Content "$zip.sha256" -Encoding ascii
+    # Record the exact restored package inventory so verification can detect
+    # missing notices rather than accepting an empty ThirdPartyLicenses folder.
+    foreach ($package in $packages.Keys) {
+        $metadata = @(Get-ChildItem (Join-Path $notices $package) -Recurse -File -Filter '*.nuspec')
+        if ($metadata.Count -eq 0) { throw "Missing package license metadata: $package" }
+    }
+    $packages.Keys | Sort-Object | Set-Content (Join-Path $notices 'packages.txt') -Encoding ascii
+
+    # Complete compression and hashing before touching a previous successful build.
+    Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $pendingZip -CompressionLevel Optimal
+    $hash = (Get-FileHash $pendingZip -Algorithm SHA256).Hash.ToLowerInvariant()
+    "$hash *$(Split-Path $zip -Leaf)" | Set-Content "$pendingZip.sha256" -Encoding ascii
+    # Two files cannot be replaced atomically. Remove the old checksum first so
+    # interruption cannot leave a new ZIP advertised by the old checksum.
+    if (Test-Path "$zip.sha256") { Remove-Item "$zip.sha256" }
+    Move-Item -LiteralPath $pendingZip -Destination $zip -Force
+    Move-Item -LiteralPath "$pendingZip.sha256" -Destination "$zip.sha256" -Force
     Write-Host "Packaged $zip (SHA-256 $hash)"
 }
 finally {
+    foreach ($pending in @($pendingZip, "$pendingZip.sha256")) {
+        if (Test-Path $pending) { Remove-Item -LiteralPath $pending -Force }
+    }
     Remove-Item $stage -Recurse -Force
 }
+
