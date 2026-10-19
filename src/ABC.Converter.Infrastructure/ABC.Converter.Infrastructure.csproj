@@ -6,7 +6,7 @@
     <ProjectReference Include="..\ABC.Converter.Core\ABC.Converter.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.32" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.13" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
     <PackageReference Include="SkiaSharp" Version="4.153.1" />
   </ItemGroup>
