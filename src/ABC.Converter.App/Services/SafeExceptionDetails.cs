@@ -9,6 +9,6 @@ public static class SafeExceptionDetails
     public static string Format(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
-        return Redact($"{exception.GetType().Name}: {exception.Message}\n{exception.StackTrace}");
+        return Redact(exception.ToString());
     }
 }
