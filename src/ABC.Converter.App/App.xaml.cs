@@ -77,7 +77,7 @@ public partial class App : Application
         }
         catch (Exception exception)
         {
-            string details = SafeExceptionDetails.Format(exception);
+            string details = SafeExceptionDetails.Format(exception, includeInnerExceptions: true);
             string? logPath = null;
             try
             {

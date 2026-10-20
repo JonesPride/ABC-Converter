@@ -11,7 +11,7 @@ public sealed class StartupExceptionDetailsTests
         var inner = new InvalidOperationException("Button style cannot apply to ToggleButton; api_key=secret-value&format=json");
         var outer = new InvalidOperationException("Window initialization failed.", inner);
 
-        string details = SafeExceptionDetails.Format(outer);
+        string details = SafeExceptionDetails.Format(outer, includeInnerExceptions: true);
 
         Assert.Contains("Window initialization failed.", details);
         Assert.Contains("Button style cannot apply to ToggleButton", details);
