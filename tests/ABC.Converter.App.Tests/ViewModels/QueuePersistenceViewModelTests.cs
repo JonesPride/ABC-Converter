@@ -470,7 +470,10 @@ public sealed class QueuePersistenceViewModelTests
     {
         using var files = new TemporaryDirectory();
         string path = files.Write("retry-order.cbz", [0x01]);
-        var failed = CreateRecord(path, QueueJobState.Failed);
+        var failed = CreateRecord(path, QueueJobState.Failed) with
+        {
+            OutputRoot = files.PathFor("output"),
+        };
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var store = new InMemoryQueueStore([failed])
