@@ -28,7 +28,7 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 10.0.x
       - name: Restore
         shell: pwsh
         run: .\scripts\Setup.ps1
@@ -36,7 +36,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $json = dotnet list .\ABC.Converter.sln package --vulnerable --include-transitive --format json
+          $json = dotnet package list --project .\ABC.Converter.sln --vulnerable --include-transitive --format json --no-restore
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $audit = $json | ConvertFrom-Json
           $vulnerable = @(
