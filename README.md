@@ -8,7 +8,7 @@ inspect each job's result.
 ## Requirements
 
 - Windows 10 version 22H2 or Windows 11 on an x64 PC
-- .NET 8 SDK for x64
+- .NET 10 SDK for x64 (SDK 10.0.403 or later in the 10.0 line)
 - Windows PowerShell 5.1 or PowerShell 7
 
 The developer workflow does not require Visual Studio, Bash, WSL, or
@@ -18,7 +18,7 @@ The developer workflow does not require Visual Studio, Bash, WSL, or
 dotnet --version
 ```
 
-The command must report an installed .NET 8 SDK.
+The command must report a .NET 10 SDK compatible with `global.json`.
 
 ## Build, test, and run
 
@@ -36,7 +36,7 @@ The process-scoped execution policy ends when you close that PowerShell
 session. An organization policy may prevent this override; contact your
 administrator if PowerShell still blocks the scripts.
 
-`Setup.ps1` checks for .NET 8 and restores NuGet packages. `Build.ps1` builds
+`Setup.ps1` checks for .NET 10 and restores NuGet packages. `Build.ps1` builds
 the solution with warnings treated as errors. `Test.ps1` uses the existing
 build, so run `Build.ps1` first. Test results are written to
 `TestResults\` using generated filenames so reports from the two test projects
