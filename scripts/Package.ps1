@@ -74,6 +74,6 @@ finally {
     foreach ($pending in @($pendingZip, "$pendingZip.sha256")) {
         if (Test-Path $pending) { Remove-Item -LiteralPath $pending -Force }
     }
-    Remove-Item $stage -Recurse -Force
+    Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 }
 
