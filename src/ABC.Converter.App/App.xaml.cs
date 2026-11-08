@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net.Http;
 using System.Windows;
 using ABC.Converter.App.Services;
@@ -23,6 +24,7 @@ public partial class App : Application
     {
         base.OnStartup(eventArgs);
 
+        string startupStage = "initializing the application";
         try
         {
         instanceMutex = new Mutex(false, @"Global\ABC.Converter.Queue." + System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value);
@@ -62,7 +64,9 @@ public partial class App : Application
             new CommandErrorHandler().Handle,
             comicVineSettings,
             queueStore: queueStore);
+        startupStage = "restoring the saved queue";
         await viewModel.InitializeAsync(CancellationToken.None);
+        startupStage = "opening the main window";
         var window = new MainWindow
         {
             DataContext = viewModel,
@@ -71,12 +75,37 @@ public partial class App : Application
         MainWindow = window;
         window.Show();
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            if (queueStore is not null) await queueStore.DisposeAsync();
-            queueStore = null;
-            MessageBox.Show("The saved queue could not be opened. Close ABC Converter, back up abc-converter.db in Local AppData/ABC Converter, and check that the application has permission to access that folder. A newer database requires a newer app version.",
-                "ABC Converter could not start", MessageBoxButton.OK, MessageBoxImage.Error);
+            string details = SafeExceptionDetails.Format(exception, includeInnerExceptions: true);
+            string? logPath = null;
+            try
+            {
+                string folder = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "ABC Converter");
+                Directory.CreateDirectory(folder);
+                logPath = Path.Combine(folder, "startup-error.log");
+                File.WriteAllText(logPath, $"Failure while {startupStage}.{Environment.NewLine}{details}");
+            }
+            catch (Exception)
+            {
+                // A diagnostic write failure must not hide the original startup error.
+                logPath = null;
+            }
+            if (queueStore is not null)
+            {
+                try { await queueStore.DisposeAsync(); }
+                catch (Exception) { /* Preserve the original startup failure. */ }
+                queueStore = null;
+            }
+            Exception cause = exception.GetBaseException();
+            string message = $"ABC Converter failed while {startupStage}.{Environment.NewLine}{Environment.NewLine}" +
+                SafeExceptionDetails.Redact($"{cause.GetType().Name}: {cause.Message}");
+            if (logPath is not null)
+                message += $"{Environment.NewLine}{Environment.NewLine}Diagnostic details: {logPath}";
+            message += $"{Environment.NewLine}{Environment.NewLine}Keep the saved queue database intact.";
+            MessageBox.Show(message, "ABC Converter could not start", MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(1);
         }
     }
