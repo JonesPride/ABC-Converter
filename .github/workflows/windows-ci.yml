@@ -28,7 +28,7 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 10.0.x
       - name: Restore
         shell: pwsh
         run: .\scripts\Setup.ps1
@@ -36,7 +36,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $json = dotnet list .\ABC.Converter.sln package --vulnerable --include-transitive --format json
+          $json = dotnet package list --project .\ABC.Converter.sln --vulnerable --include-transitive --format json --no-restore
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $audit = $json | ConvertFrom-Json
           $vulnerable = @(
@@ -84,7 +84,7 @@ jobs:
           retention-days: 14
       - name: Upload test results
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-test-results
           path: TestResults/**/*.trx

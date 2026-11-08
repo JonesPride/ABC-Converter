@@ -301,7 +301,7 @@
                    Margin="0,0,0,5"
                    FontWeight="SemiBold"
                    Foreground="#FF405866" />
-        <ProgressBar Value="{Binding OverallProgress}"
+        <ProgressBar Value="{Binding OverallProgress, Mode=OneWay}"
                      Minimum="0"
                      Maximum="100"
                      Height="10" />
